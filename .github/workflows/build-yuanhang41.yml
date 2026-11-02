@@ -1,0 +1,108 @@
+name: Build yuanhang41 OpenWrt
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_tests:
+        description: Run the kernel patch-stack test suite before building
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  E5LINUX_REF: a8a814fd550a92d8a83150d0b7aec676cb3c79f4
+  KERNEL_REF: 020b970e351eee3887e6caaf2d653926e7086e44
+  INPUTS_TAG: inputs
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - name: Checkout build kit
+        uses: actions/checkout@v4
+
+      - name: Checkout e5-linux at the release commit
+        uses: actions/checkout@v4
+        with:
+          repository: sprd-linux-devs/e5-linux
+          ref: ${{ env.E5LINUX_REF }}
+          submodules: recursive
+          path: e5-linux
+          persist-credentials: false
+
+      - name: Checkout linux-lts-e5 at the pinned kernel base
+        uses: actions/checkout@v4
+        with:
+          repository: Enceka/linux-lts-e5
+          ref: ${{ env.KERNEL_REF }}
+          path: linux-lts-e5
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential python3 curl ca-certificates \
+            clang lld llvm \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            flex bison bc cpio pahole dwarves \
+            libssl-dev libelf-dev \
+            lz4 zstd xz-utils \
+            e2fsprogs kmod binutils file unzip
+
+      - name: Restore build inputs from release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p downloads
+          gh release download "$INPUTS_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.zip' --pattern '*.sha256' --dir downloads
+          (cd downloads && sha256sum --check *.sha256)
+          mkdir -p pkg dumps base work/busybox
+          unzip -q downloads/yuanhang41s-package.zip -d pkg
+          unzip -q downloads/yuanhang41-stock-dumps.zip -d dumps
+          cat dumps/SHA256SUMS | sha256sum --check -
+          PKGDIR=$(find pkg -maxdepth 1 -type d -name 'yuanhang41s-openwrt-*' | head -1)
+          [ -n "$PKGDIR" ] || { echo '41S package layout unexpected'; exit 1; }
+          cp "$PKGDIR/files/kernel.config" base/kernel.config
+          cp dumps/boot_b.img dumps/yuanhang41-stock-boot_b.img
+          cp dumps/misc-head.bin dumps/yuanhang41-stock-misc-head.bin
+
+      - name: Build the yuanhang41 kernel
+        run: |
+          bash build.sh kernel
+
+      - name: Inject modules into the rootfs image
+        run: |
+          bash build.sh rootfs
+
+      - name: Build the boot image
+        run: |
+          bash build.sh boot
+
+      - name: Repack the TF installer package (ZTE 7541N)
+        run: |
+          bash build.sh repack
+
+      - name: Upload the installer package
+        uses: actions/upload-artifact@v4
+        with:
+          name: yuanhang41-openwrt-package
+          path: |
+            out/*.zip
+            out/*.sha256
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-diagnostics
+          path: |
+            out/log-*.txt
+            yh41/objects/build.log
+          if-no-files-found: ignore
