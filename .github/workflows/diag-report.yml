@@ -1,0 +1,56 @@
+name: Print vendor identity report (log-only)
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Download and analyze diagnostics artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          RUN_ID=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts" \
+            --jq '.artifacts[] | select(.name=="vendor-diagnostics") | .id' | head -1)
+          [ -n "$RUN_ID" ] || { echo 'no vendor-diagnostics artifact'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$RUN_ID/zip" > a.zip
+          mkdir -p a && cd a && unzip -q ../a.zip
+
+          echo '================ KEY FILES ================'
+          cat out/key-files.txt 2>/dev/null | head -60 || true
+
+          echo '================ FILE LISTS ================'
+          for l in out/*-filelist.txt; do
+            echo "--- $l ($(wc -l < "$l") files)"
+            grep -iaE 'wcn|marlin|tpd|touch|gcore|sitronix|chipone|lcd|panel|firmware|\.ko$|build\.prop' "$l" | head -50 || true
+          done
+
+          echo '=========== WCNMODEM / GNSS IDENTITY ============'
+          for f in $(find . -iname '*wcnmodem*' -o -iname '*gnssmodem*'); do
+            echo "--- $f ($(stat -c%s "$f") bytes)"
+            strings -n 8 "$f" | grep -iaE 'marlin|uwe[0-9]|sdio|wcn|gnss|version|2[0-9]{3}[._-]' | sort -u | head -30 || true
+          done
+
+          echo '=========== TOUCH FILES ============'
+          find . -path '*firmware*' -o -iname '*gcore*' -o -iname '*sitronix*' -o -iname '*chipone*' -o -iname '*tpd*' | while read -r f; do
+            echo "--- $f ($(stat -c%s "$f" 2>/dev/null) bytes)"
+          done
+
+          echo '=========== VENDOR_DLKM MODULES ============'
+          find . -path '*vendor_dlkm*' -name '*.ko' | sort | head -80
+
+          echo '=========== BUILD.PROP (vendor) ============'
+          find . -name 'build.prop' -path '*vendor*' | head -2 | while read -r f; do
+            echo "--- $f"
+            grep -aE 'lcd|panel|tpd|touch|wcn|wlan|marlin|usb|charger' "$f" | head -30 || true
+          done
+
+          echo '=========== LCD CONFIGS ============'
+          find . -iname '*lcd*' -o -iname '*panel*' | grep -v filelist | head -40
