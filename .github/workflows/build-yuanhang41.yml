@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   E5LINUX_REF: a8a814fd550a92d8a83150d0b7aec676cb3c79f4
@@ -115,15 +116,12 @@ jobs:
 
       - name: Reuse kernel artifacts from a previous run
         if: inputs.skip_kernel == true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p yh41/kernel-out
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/${{ inputs.kernel_run_id }}/artifacts" \
-            --jq '.artifacts[] | select(.name=="kernel-out") | .id' | head -1 > aid
-          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$(cat aid)/zip" > k.zip
-          unzip -q k.zip -d yh41/kernel-out
-          cat yh41/kernel-out/kernel.release
+        uses: actions/download-artifact@v4
+        with:
+          name: kernel-out
+          run-id: ${{ inputs.kernel_run_id }}
+          github-token: ${{ github.token }}
+          path: yh41
 
       - name: Inject modules into the rootfs image
         run: |
