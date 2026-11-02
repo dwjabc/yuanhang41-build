@@ -103,6 +103,16 @@ boot)
         ar x busybox.deb
         tar --zstd -xf data.tar.zst -C . ./usr/bin/busybox
     )
+    echo "== staging f2fs repair tools from the released rootfs =="
+    RIMG="$N/root.ext4"
+    if [ ! -f "$RIMG" ]; then gzip -dc "$PKG/files/openwrt.ext4.gz" > "$RIMG"; fi
+    FT="$N/f2fs-root"; rm -rf "$FT"; mkdir -p "$FT"
+    for p in sbin lib usr/bin usr/sbin usr/lib/ucode; do
+        debugfs -R "rdump /$p $FT" "$RIMG" > /dev/null 2>&1 || echo "rdump /$p partial"
+    done
+    cd "$REPO"
+    python3 boot/prepare-f2fs-tools.py --root "$FT" --out "$TOP/out/boot/f2fs-tools"
+
     cd "$REPO"
     echo "== normalizing misc BCAB =="
     # The device's live BCAB may carry successful_boot=0 on the Android slot
