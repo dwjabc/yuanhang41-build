@@ -22,14 +22,14 @@ case ${1:?stage: kernel|rootfs|boot|repack} in
 kernel)
     cd "$REPO"
     echo "== building kernel (jobs=$JOBS) =="
-    python3 devices/yuanhang41s/build-kernel.py \
+    python3 devices/yuanhang41/build-kernel.py \
         --kernel "$KERNEL" \
         --build  "$N/objects" \
         --base-config "$TOP/base/kernel.config" \
         --out     "$N/kernel-out" \
         --jobs "$JOBS"
     rel=$(cat "$N/kernel-out/kernel.release")
-    case "$rel" in *-yuanhang41s-*) ;; *) echo "wrong release: $rel"; exit 1 ;; esac
+    case "$rel" in *-yuanhang41-*) ;; *) echo "wrong release: $rel"; exit 1 ;; esac
     echo "== kernel ok: $rel =="
     ;;
 
@@ -43,14 +43,21 @@ rootfs)
     echo "== rootfs surgery for $REL =="
     CMDS="$N/fs-cmds1"; : > "$CMDS"
     # debugfs ls -p lines: /inode/mode/uid/gid/size/mtime/name (leading slash!)
-    LSOUT=$(debugfs -R "ls -p /lib/modules/$REL" "$IMG" 2>&1) || {
-        echo "debugfs ls failed:"; echo "$LSOUT" | head -5; exit 1; }
-    echo "$LSOUT" | while IFS='/' read -r _ inode mode uid gid size mtime name rest; do
-        case "$name" in ''|'.'|'..') continue ;; esac
-        [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "SKIP-ODD-NAME:$name" >&2; continue; }
-        echo "rm /lib/modules/$REL/$name" >> "$CMDS"
+    # The shipped image may carry a DIFFERENT release dir (yuanhang41s vs our
+    # yuanhang41 build): drop every release directory before writing ours.
+    DPOUT=$(debugfs -R "ls -p /lib/modules" "$IMG" 2>&1) || {
+        echo "debugfs ls /lib/modules failed:"; echo "$DPOUT" | head -5; exit 1; }
+    echo "$DPOUT" | while IFS='/' read -r _ _dmode _du _dg _dsz _dm reldir _r; do
+        case "$reldir" in ''|'.'|'..'|'lost+found') continue ;; esac
+        [[ "$reldir" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "SKIP-ODD:$reldir" >&2; continue; }
+        FOUT=$(debugfs -R "ls -p /lib/modules/$reldir" "$IMG" 2>/dev/null) || continue
+        echo "$FOUT" | while IFS='/' read -r _ _m _u _g _s _t f _x; do
+            case "$f" in ''|'.'|'..') continue ;; esac
+            [[ "$f" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "SKIP-ODD:$f" >&2; continue; }
+            echo "rm /lib/modules/$reldir/$f" >> "$CMDS"
+        done
+        echo "rmdir /lib/modules/$reldir" >> "$CMDS"
     done
-    echo "rmdir /lib/modules/$REL" >> "$CMDS"
     echo "== $(grep -c '^rm' "$CMDS") module files to remove =="
     echo "rm /etc/e5/device-model" >> "$CMDS"
     printf '中兴远航41\n' > "$N/device-model"
@@ -106,7 +113,7 @@ boot)
         --android-slot b \
         --kernel "$N/kernel-out/Image.lk" \
         --modules "$N/kernel-out/modules" \
-        --module-order devices/yuanhang41s/module-order.txt \
+        --module-order devices/yuanhang41/module-order.txt \
         --busybox "$BB" \
         --out "$OUT/yuanhang41-boot.img"
     ls -la "$OUT"/yuanhang41-boot.*

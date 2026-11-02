@@ -78,12 +78,19 @@ jobs:
           cp dumps/boot_b.img dumps/yuanhang41-stock-boot_b.img
           cp dumps/misc-head.bin dumps/yuanhang41-stock-misc-head.bin
 
+      - name: Stage the yuanhang41 device profile (41S copy + overlay)
+        run: |
+          cp -a e5-linux/devices/yuanhang41s e5-linux/devices/yuanhang41
+          cp overlay-devices/yuanhang41/* e5-linux/devices/yuanhang41/
+          echo "profile staged:"; ls e5-linux/devices/yuanhang41 | head -5
+          grep -n "yuanhang41-bringup1" e5-linux/devices/yuanhang41/kernel.config
+
       - name: Restore kernel build cache
         id: kcache
         uses: actions/cache@v4
         with:
           path: yh41/kernel-out
-          key: kernel-${{ env.KERNEL_REF }}-${{ env.E5LINUX_REF }}-v1
+          key: kernel-${{ env.KERNEL_REF }}-${{ env.E5LINUX_REF }}-yh41-v2
 
       - name: Build the yuanhang41 kernel
         if: steps.kcache.outputs.cache-hit != 'true'
