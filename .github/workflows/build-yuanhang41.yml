@@ -78,7 +78,15 @@ jobs:
           cp dumps/boot_b.img dumps/yuanhang41-stock-boot_b.img
           cp dumps/misc-head.bin dumps/yuanhang41-stock-misc-head.bin
 
+      - name: Restore kernel build cache
+        id: kcache
+        uses: actions/cache@v4
+        with:
+          path: yh41/kernel-out
+          key: kernel-${{ env.KERNEL_REF }}-${{ env.E5LINUX_REF }}-v1
+
       - name: Build the yuanhang41 kernel
+        if: steps.kcache.outputs.cache-hit != 'true'
         run: |
           bash build.sh kernel
 

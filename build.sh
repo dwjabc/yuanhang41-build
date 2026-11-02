@@ -73,6 +73,9 @@ rootfs)
     ) >> "$CMDS2"
     debugfs -w -f "$CMDS2" "$IMG" > "$N/fs-log2" 2>&1
     ! grep -iE 'error|not found|cannot|failed' "$N/fs-log2" || { cat "$N/fs-log2"; exit 1; }
+    # debugfs rm only unlinks; removed module inodes stay unattached.
+    # Repair once, then require a clean check.
+    e2fsck -fy "$IMG" > "$N/fsck-repair.log" 2>&1
     e2fsck -fn "$IMG" > "$N/fsck.log" 2>&1 || { tail -20 "$N/fsck.log"; exit 1; }
     n=$(find "$T/lib/modules/$REL" -name '*.ko' | wc -l)
     gzip -9 -c "$IMG" > "$OUT/yuanhang41-openwrt.ext4.gz"
