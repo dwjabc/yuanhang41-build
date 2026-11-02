@@ -43,12 +43,15 @@ rootfs)
     echo "== rootfs surgery for $REL =="
     CMDS="$N/fs-cmds1"; : > "$CMDS"
     # debugfs ls -p lines: /inode/mode/uid/gid/size/mtime/name (leading slash!)
-    debugfs -R "ls -p /lib/modules/$REL" "$IMG" 2>/dev/null | while IFS='/' read -r _ inode mode uid gid size mtime name rest; do
+    LSOUT=$(debugfs -R "ls -p /lib/modules/$REL" "$IMG" 2>&1) || {
+        echo "debugfs ls failed:"; echo "$LSOUT" | head -5; exit 1; }
+    echo "$LSOUT" | while IFS='/' read -r _ inode mode uid gid size mtime name rest; do
         case "$name" in ''|'.'|'..') continue ;; esac
         [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "SKIP-ODD-NAME:$name" >&2; continue; }
         echo "rm /lib/modules/$REL/$name" >> "$CMDS"
     done
     echo "rmdir /lib/modules/$REL" >> "$CMDS"
+    echo "== $(grep -c '^rm' "$CMDS") module files to remove =="
     echo "rm /etc/e5/device-model" >> "$CMDS"
     printf '中兴远航41\n' > "$N/device-model"
     echo "write $N/device-model /etc/e5/device-model" >> "$CMDS"
