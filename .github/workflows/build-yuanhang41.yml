@@ -3,6 +3,13 @@ name: Build yuanhang41 OpenWrt
 on:
   workflow_dispatch:
     inputs:
+      skip_kernel:
+        description: Reuse the kernel artifact from a previous run (set kernel_run_id)
+        type: boolean
+        default: false
+      kernel_run_id:
+        description: Run ID whose kernel-out artifact to reuse
+        default: ''
       run_tests:
         description: Run the kernel patch-stack test suite before building
         type: boolean
@@ -93,9 +100,30 @@ jobs:
           key: kernel-${{ env.KERNEL_REF }}-${{ env.E5LINUX_REF }}-yh41-v2
 
       - name: Build the yuanhang41 kernel
-        if: steps.kcache.outputs.cache-hit != 'true'
+        if: inputs.skip_kernel != true
         run: |
           bash build.sh kernel
+
+      - name: Snapshot kernel artifacts (any result)
+        if: always() && inputs.skip_kernel != true
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-out
+          path: yh41/kernel-out
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Reuse kernel artifacts from a previous run
+        if: inputs.skip_kernel == true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p yh41/kernel-out
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/${{ inputs.kernel_run_id }}/artifacts" \
+            --jq '.artifacts[] | select(.name=="kernel-out") | .id' | head -1 > aid
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$(cat aid)/zip" > k.zip
+          unzip -q k.zip -d yh41/kernel-out
+          cat yh41/kernel-out/kernel.release
 
       - name: Inject modules into the rootfs image
         run: |
