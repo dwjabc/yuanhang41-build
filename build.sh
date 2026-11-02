@@ -104,10 +104,30 @@ boot)
         tar --zstd -xf data.tar.zst -C . ./usr/bin/busybox
     )
     cd "$REPO"
+    echo "== normalizing misc BCAB =="
+    # The device's live BCAB may carry successful_boot=0 on the Android slot
+    # after an unconfirmed trial boot; the builder refuses that state. Android
+    # on the suffix slot does boot and run -- set its successful bit and fix
+    # the CRC so the builder sees the truthful state.
+    python3 - "$TOP/dumps/yuanhang41-stock-misc-head.bin" "$N/work/misc-head-norm.bin" << 'PY'
+import struct, sys, zlib
+raw = bytearray(open(sys.argv[1], 'rb').read()[:4096])
+bc = bytearray(raw[0x800:0x820])
+assert bc[4:8] == b'BCAB', 'no BCAB magic'
+suffix = bytes(bc[:2])
+idx = 12 if suffix == b'_a' else 14
+assert struct.unpack('<I', bc[28:32])[0] == zlib.crc32(bytes(bc[:28])), 'BCAB CRC mismatch'
+bc[idx] |= 0x80  # successful_boot: Android runs from this slot
+bc[28:32] = struct.pack('<I', zlib.crc32(bytes(bc[:28])))
+raw[0x800:0x820] = bc
+open(sys.argv[2], 'wb').write(raw)
+print('normalized slot %s info byte: %#04x' % (suffix.decode(), bc[idx]))
+PY
+
     echo "== building boot image =="
     python3 boot/build-boot-image.py \
         --stock-boot "$TOP/dumps/yuanhang41-stock-boot_b.img" \
-        --misc-head  "$TOP/dumps/yuanhang41-stock-misc-head.bin" \
+        --misc-head  "$N/work/misc-head-norm.bin" \
         --android-slot b \
         --kernel "$N/kernel-out/Image.lk" \
         --modules "$N/kernel-out/modules" \
