@@ -29,14 +29,18 @@ jobs:
 
       - name: Extract EROFS images
         run: |
+          mkdir -p out
+          set +e
           for img in imgs/vendor.img imgs/odm.img imgs/vendor_dlkm.img; do
             name=$(basename "$img" .img)
-            echo "== $name file list =="
-            dump.erofs "$img" | head -400 | tee "out/${name}-filelist.txt"
+            echo "== $name =="
             mkdir -p "ex/$name"
-            fsck.erofs --extract="ex/$name" "$img" > "out/${name}-fsck.log" 2>&1 || \
-              echo "fsck extract failed for $name (see log)"
+            fsck.erofs --extract="ex/$name" "$img" > "out/${name}-fsck.log" 2>&1
+            echo "exit: $? (log: out/${name}-fsck.log)"
+            (cd "ex/$name" && find . -type f | sort) > "out/${name}-filelist.txt"
+            wc -l "out/${name}-filelist.txt"
           done
+          set -e
           echo "== key firmware files =="
           find ex -iname '*wcnmodem*' -o -iname '*gnssmodem*' -o -iname '*gcore*' \
                -o -iname '*sitronix*' -o -iname '*chipone*' -o -iname '*tpd*' \
