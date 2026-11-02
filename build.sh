@@ -103,13 +103,12 @@ boot)
         ar x busybox.deb
         tar --zstd -xf data.tar.zst -C . ./usr/bin/busybox
     )
-    echo "== staging f2fs repair tools from the released rootfs =="
-    RIMG="$N/root.ext4"
-    if [ ! -f "$RIMG" ]; then gzip -dc "$PKG/files/openwrt.ext4.gz" > "$RIMG"; fi
+    echo "== staging f2fs repair tools from the released boot image =="
+    # the released rootfs has no fsck.f2fs; the tools live in the shipped
+    # initramfs (same bytes as the release boot.json manifest)
+    python3 -m pip install --quiet --break-system-packages lz4 2>/dev/null ||         python3 -m pip install --quiet --user lz4 || true
     FT="$N/f2fs-root"; rm -rf "$FT"; mkdir -p "$FT"
-    for p in sbin lib usr/bin usr/sbin usr/lib/ucode; do
-        debugfs -R "rdump /$p $FT" "$RIMG" > /dev/null 2>&1 || echo "rdump /$p partial"
-    done
+    python3 "$TOP/make-f2fs-root.py" "$PKG/files/boot.img" "$FT"
     cd "$REPO"
     python3 boot/prepare-f2fs-tools.py --root "$FT" --out "$TOP/out/boot/f2fs-tools"
 
