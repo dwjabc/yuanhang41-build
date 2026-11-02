@@ -135,6 +135,7 @@ PY
 
     echo "== building boot image =="
     python3 boot/build-boot-image.py \
+        --f2fs-tools "$TOP/out/boot/f2fs-tools" \
         --stock-boot "$TOP/dumps/yuanhang41-stock-boot_b.img" \
         --misc-head  "$N/misc-head-norm.bin" \
         --android-slot b \
