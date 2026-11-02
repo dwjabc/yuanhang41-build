@@ -48,10 +48,12 @@ jobs:
             build-essential python3 curl ca-certificates \
             clang lld llvm \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            flex bison bc cpio pahole dwarves \
+            flex bison bc cpio \
             libssl-dev libelf-dev \
             lz4 zstd xz-utils \
             e2fsprogs kmod binutils file unzip
+          sudo apt-get install -y pahole || sudo apt-get install -y dwarves
+          pahole --version
 
       - name: Restore build inputs from release assets
         env:
