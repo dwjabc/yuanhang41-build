@@ -64,7 +64,8 @@ jobs:
             --pattern '*.zip' --pattern '*.sha256' --dir downloads
           (cd downloads && sha256sum --check *.sha256)
           mkdir -p pkg dumps base work/busybox
-          unzip -q downloads/yuanhang41s-package.zip -d pkg
+          # the released zip has no wrapper directory; unpack into a named one
+          unzip -q downloads/yuanhang41s-package.zip -d pkg/yuanhang41s-openwrt-package
           unzip -q downloads/yuanhang41-stock-dumps.zip -d dumps
           (cd dumps && sha256sum --check SHA256SUMS)
           PKGDIR=$(find pkg -maxdepth 1 -type d -name 'yuanhang41s-openwrt-*' | head -1)
