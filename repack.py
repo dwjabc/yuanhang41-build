@@ -141,18 +141,20 @@ def main():
     zip_path = OUTDIR / (pkg_name + '.zip')
     if zip_path.exists():
         zip_path.unlink()
+    # file entries only: explicit directory markers break Info-ZIP unzip
+    # (marker lacks the trailing slash / DOS dir bit, so children cannot be
+    # created under what unzip already made a file)
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         for path in sorted(STAGE.rglob('*')):
+            if not path.is_file():
+                continue
             arc = path.relative_to(STAGE).as_posix()
             info = zipfile.ZipInfo(arc, date_time=time.gmtime(epoch)[:6])
             mode = path.stat().st_mode & 0xFFFF
-            info.external_attr = (stat.S_IMODE(mode) << 16) | (0x10000 if path.is_dir() else 0)
+            info.external_attr = (stat.S_IMODE(mode) << 16)
             info.compress_type = zipfile.ZIP_DEFLATED
-            if path.is_dir():
-                zf.writestr(info, b'')
-            else:
-                with open(path, 'rb') as f:
-                    zf.writestr(info, f.read())
+            with open(path, 'rb') as f:
+                zf.writestr(info, f.read())
     print('package:', pkg_name)
     print('zip:', zip_path, f'{zip_path.stat().st_size/1e6:.1f} MB')
 
