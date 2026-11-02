@@ -58,7 +58,7 @@ jobs:
             flex bison bc cpio \
             libssl-dev libelf-dev \
             lz4 zstd xz-utils \
-            e2fsprogs kmod binutils file unzip
+            e2fsprogs kmod binutils file unzip qemu-user-static binfmt-support
           sudo apt-get install -y pahole || sudo apt-get install -y dwarves
           pahole --version
           # the patch-stack tests compile host C probes with -Werror via `cc`;

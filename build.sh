@@ -103,8 +103,6 @@ boot)
         ar x busybox.deb
         tar --zstd -xf data.tar.zst -C . ./usr/bin/busybox
     )
-    "$BB" | head -1
-
     cd "$REPO"
     echo "== building boot image =="
     python3 boot/build-boot-image.py \
