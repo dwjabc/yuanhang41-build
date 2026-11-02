@@ -109,7 +109,7 @@ boot)
     # after an unconfirmed trial boot; the builder refuses that state. Android
     # on the suffix slot does boot and run -- set its successful bit and fix
     # the CRC so the builder sees the truthful state.
-    python3 - "$TOP/dumps/yuanhang41-stock-misc-head.bin" "$N/work/misc-head-norm.bin" << 'PY'
+    python3 - "$TOP/dumps/yuanhang41-stock-misc-head.bin" "$N/misc-head-norm.bin" << 'PY'
 import struct, sys, zlib
 raw = bytearray(open(sys.argv[1], 'rb').read()[:4096])
 bc = bytearray(raw[0x800:0x820])
@@ -127,7 +127,7 @@ PY
     echo "== building boot image =="
     python3 boot/build-boot-image.py \
         --stock-boot "$TOP/dumps/yuanhang41-stock-boot_b.img" \
-        --misc-head  "$N/work/misc-head-norm.bin" \
+        --misc-head  "$N/misc-head-norm.bin" \
         --android-slot b \
         --kernel "$N/kernel-out/Image.lk" \
         --modules "$N/kernel-out/modules" \
