@@ -61,7 +61,7 @@ def main(*, profile='yuanhang41', here=HERE):
     subprocess.run(command+['olddefconfig'],env=env,check=True)
     subprocess.run(command+['-j'+str(args.jobs),'Image','modules'],env=env,check=True)
     release=(build/'include/config/kernel.release').read_text().strip()
-    tags=('-yuanhang41s-', '-yh41s-') if profile=='yuanhang41s' else ('-changxing60-',)
+    tags=('-yuanhang41s-', '-yh41s-') if profile=='yuanhang41s' else ('-'+profile+'-',)
     if not any(tag in release for tag in tags):
         raise ValueError('Wrong profile release: '+release)
     for source,target in (('arch/arm64/boot/Image','Image'),('.config','config'),
