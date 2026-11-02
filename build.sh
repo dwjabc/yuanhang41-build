@@ -42,8 +42,10 @@ rootfs)
     REL=$(cat "$N/kernel-out/kernel.release")
     echo "== rootfs surgery for $REL =="
     CMDS="$N/fs-cmds1"; : > "$CMDS"
-    debugfs -R "ls -p /lib/modules/$REL" "$IMG" 2>/dev/null | while IFS='/' read -r _1 _2 _3 _4 _5 _6 name _7; do
+    # debugfs ls -p lines: /inode/mode/uid/gid/size/mtime/name (leading slash!)
+    debugfs -R "ls -p /lib/modules/$REL" "$IMG" 2>/dev/null | while IFS='/' read -r _ inode mode uid gid size mtime name rest; do
         case "$name" in ''|'.'|'..') continue ;; esac
+        [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "SKIP-ODD-NAME:$name" >&2; continue; }
         echo "rm /lib/modules/$REL/$name" >> "$CMDS"
     done
     echo "rmdir /lib/modules/$REL" >> "$CMDS"
