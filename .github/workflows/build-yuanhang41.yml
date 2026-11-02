@@ -66,7 +66,7 @@ jobs:
           mkdir -p pkg dumps base work/busybox
           unzip -q downloads/yuanhang41s-package.zip -d pkg
           unzip -q downloads/yuanhang41-stock-dumps.zip -d dumps
-          cat dumps/SHA256SUMS | sha256sum --check -
+          (cd dumps && sha256sum --check SHA256SUMS)
           PKGDIR=$(find pkg -maxdepth 1 -type d -name 'yuanhang41s-openwrt-*' | head -1)
           [ -n "$PKGDIR" ] || { echo '41S package layout unexpected'; exit 1; }
           cp "$PKGDIR/files/kernel.config" base/kernel.config
