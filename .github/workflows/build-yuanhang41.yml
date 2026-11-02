@@ -54,6 +54,10 @@ jobs:
             e2fsprogs kmod binutils file unzip
           sudo apt-get install -y pahole || sudo apt-get install -y dwarves
           pahole --version
+          # the patch-stack tests compile host C probes with -Werror via `cc`;
+          # gcc-13's -Wmisleading-indentation trips on released test fixtures,
+          # clang (which the kernel build itself uses, LLVM=1) does not.
+          sudo ln -sf "$(command -v clang)" /usr/bin/cc
 
       - name: Restore build inputs from release assets
         env:

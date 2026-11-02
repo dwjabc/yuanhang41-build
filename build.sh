@@ -21,11 +21,6 @@ case ${1:?stage: kernel|rootfs|boot|repack} in
 
 kernel)
     cd "$REPO"
-    # tests are pure-python checks of the patch stack against the kernel tree
-    if [ "${RUN_TESTS:-1}" = 1 ]; then
-        echo "== kernel patch-stack sanity (report only) =="
-        python3 devices/common/test_power_probe.py --kernel "$KERNEL" || true
-    fi
     echo "== building kernel (jobs=$JOBS) =="
     python3 devices/yuanhang41s/build-kernel.py \
         --kernel "$KERNEL" \
