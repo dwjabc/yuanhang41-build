@@ -98,7 +98,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: yh41/kernel-out
-          key: kernel-${{ env.KERNEL_REF }}-${{ env.E5LINUX_REF }}-yh41-v2
+          key: kernel-${{ env.KERNEL_REF }}-${{ env.E5LINUX_REF }}-yh41-v3
 
       - name: Build the yuanhang41 kernel
         if: inputs.skip_kernel != true

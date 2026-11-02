@@ -61,9 +61,6 @@ def main(*, profile='yuanhang41', here=HERE):
     subprocess.run(command+['olddefconfig'],env=env,check=True)
     subprocess.run(command+['-j'+str(args.jobs),'Image','modules'],env=env,check=True)
     release=(build/'include/config/kernel.release').read_text().strip()
-    tags=('-yuanhang41s-', '-yh41s-') if profile=='yuanhang41s' else ('-'+profile+'-',)
-    if not any(tag in release for tag in tags):
-        raise ValueError('Wrong profile release: '+release)
     for source,target in (('arch/arm64/boot/Image','Image'),('.config','config'),
             ('System.map','System.map'),('modules.builtin','modules.builtin'),
             ('modules.builtin.modinfo','modules.builtin.modinfo'),('include/config/kernel.release','kernel.release')):
@@ -87,6 +84,9 @@ def main(*, profile='yuanhang41', here=HERE):
     (out/'baseline.json').write_text(json.dumps({'sha256':hashlib.sha256(baseline).hexdigest(),
         'profile':profile,'source_commit':subprocess.check_output(['git','-c','safe.directory='+str(kernel),'-C',str(kernel),'rev-parse','HEAD'],text=True).strip()},indent=2)+'\n')
     runpy.run_path(str(TOP/'upstream/check-container-support.py'))['check'](out,record=True)
+    tags=('-yuanhang41s-', '-yh41s-') if profile=='yuanhang41s' else ('-'+profile+'-',)
+    if not any(tag in release for tag in tags):
+        raise ValueError('Wrong profile release: '+release)
     print('Verified complete profile kernel and module cohort:',out)
 
 
