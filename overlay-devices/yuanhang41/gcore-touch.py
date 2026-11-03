@@ -10,7 +10,7 @@ SRCS = ('gcore_drv_main.c', 'gcore_drv_interface.c',
         'gcore_common_interface.c', 'gcore_drv_fw_update.c',
         'gcore_drv_mp_test.c')
 HDRS = ('gcore_drv_common.h', 'gcore_drv_firmware.h', 'gcore_ioctl.h',
-        'gcore_firmware_config.h', 'ztp_common.h')
+        'gcore_firmware_config.h', 'ztp_common.h', 'ztp_ufp.h', 'zte_tpd.h')
 
 MAKEFILE = '''obj-$(CONFIG_TOUCHSCREEN_GCORE) += gcore_ts.o
 gcore_ts-y := gcore_drv_main.o gcore_drv_interface.o \\
