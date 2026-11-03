@@ -353,12 +353,15 @@ static int sprd_hsphy_init(struct usb_phy *x)
 	 */
 	sc27xx_dpdm_switch_to_phy(phy->pmic, true);
 
-	if (sprd_usbm_event_is_active()) {
-		/* select the AON-SYS USB controller */
-		msk = MASK_AON_APB_USB20_CTRL_MUX_REG;
-		ret |= regmap_update_bits(phy->hsphy_glb, REG_AON_APB_AON_SOC_USB_CTRL,
-			msk, 0);
-	}
+	/* Select the AON-SYS USB controller. The sprd_usbm manager is not
+	 * built in this tree (its calls are inline stubs), so the vendor
+	 * gate never opens and the mux keeps its reset value, which selects
+	 * the IPA/DWC3 path: musb then soft-connects through a phy path
+	 * nothing powers and the host never sees the pull-up. Always point
+	 * the mux at the AON/MUSB side for this controller. */
+	msk = MASK_AON_APB_USB20_CTRL_MUX_REG;
+	ret |= regmap_update_bits(phy->hsphy_glb, REG_AON_APB_AON_SOC_USB_CTRL,
+		msk, 0);
 
 	/* usb enable */
 	reg = msk = MASK_AON_APB_AON_USB2_TOP_EB |
