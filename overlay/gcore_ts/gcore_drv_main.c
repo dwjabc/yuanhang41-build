@@ -22,6 +22,7 @@
 #include <linux/input/mt.h>
 #include <linux/of_irq.h>
 #include <linux/gpio.h>
+#include <linux/gpio/consumer.h>
 #include <linux/of.h>
 #include <linux/of_gpio.h>
 #include <linux/kthread.h>
@@ -746,7 +747,27 @@ int gcore_probe_device(void)
 	int retries = 0;
 	int ret = 0;
 
-	while (retries++ < 3) {
+	/* On this board the touch is held in reset until the panel pipeline
+	 * starts, which on OpenWrt happens long after userspace is up - the
+	 * vendor probe runs at 5.4s and reads zeros. Pulse the reset GPIO
+	 * ourselves and retry with generous spacing so the chip is awake
+	 * whenever the rail comes up. */
+	{
+		struct gpio_desc *rst = gpiod_get_optional(&gcore_spi_slave->dev,
+						"rst", GPIOD_OUT_HIGH);
+		if (IS_ERR(rst)) {
+			GTP_ERROR("rst gpio get failed: %ld", PTR_ERR(rst));
+		} else if (rst) {
+			gpiod_set_value_cansleep(rst, 0);
+			msleep(20);
+			gpiod_set_value_cansleep(rst, 1);
+			msleep(120);
+			gpiod_put(rst);
+			GTP_DEBUG("rst pulsed before id read");
+		}
+	}
+
+	while (retries++ < 5) {
 		gcore_idm_read_id(buf, sizeof(buf));
 
 		id = (buf[1] << 8) | buf[2];
@@ -757,6 +778,7 @@ int gcore_probe_device(void)
 			break;
 		}
 		GTP_ERROR("GC%04x chip id match fail! retries:%d", id, retries);
+		msleep(1000);
 		ret = -1;
 	}
 
