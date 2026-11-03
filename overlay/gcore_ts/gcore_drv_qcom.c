@@ -21,8 +21,8 @@
 #ifdef CONFIG_DRM_MSM
 #include <drm/drm_panel.h>
 #elif defined(CONFIG_FB)
-#include <linux/notifier.h>
-#include <linux/fb.h>
+/* the legacy fbdev blank notifier was removed upstream (6.9); this
+ * build keeps the panel always on, so no blank coordination. */
 #endif
 extern void gcore_ex_mode_recovery(void);
 /*extern int gcore_idm_enter_gesture_mode(void); */
@@ -192,41 +192,10 @@ int gcore_ts_drm_notifier_callback(struct notifier_block *self, unsigned long ev
 	return 0;
 }
 #elif defined(CONFIG_FB)
+/* blank coordination removed with the fbdev notifier */
 int gcore_ts_fb_notifier_callback(struct notifier_block *self, unsigned long event, void *data)
 {
-	unsigned int blank;
-
-	struct fb_event *evdata = data;
-
-	if (!evdata)
-		return 0;
-
-	blank = *(int *)(evdata->data);
-	GTP_INFO("event = %d, blank = %d", event, blank);
-
-	if (!(event == FB_EARLY_EVENT_BLANK || event == FB_EVENT_BLANK)) {
-		GTP_DEBUG("event(%lu) do not need process\n", event);
-		return 0;
-	}
-
-	switch (blank) {
-	case FB_BLANK_POWERDOWN:
-		if (event == FB_EARLY_EVENT_BLANK) {
-			gcore_suspend();
-		}
-		break;
-
-	case FB_BLANK_UNBLANK:
-		if (event == FB_EVENT_BLANK) {
-			gcore_resume();
-		}
-		break;
-
-	default:
-		break;
-	}
 	return 0;
-
 }
 #endif
 

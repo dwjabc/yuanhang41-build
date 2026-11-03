@@ -896,11 +896,8 @@ int gcore_touch_probe(struct gcore_dev *gdev)
 			GTP_ERROR("register notifier failed!");
 	}
 #elif defined(CONFIG_FB)
-	GTP_DEBUG("Init notifier_fb struct");
-	gdev->fb_notifier.notifier_call = gcore_ts_fb_notifier_callback;
-	if (fb_register_client(&gdev->fb_notifier)) {
-		GTP_ERROR("[FB]Unable to register fb_notifier.");
-	}
+	/* blank coordination removed with the fbdev notifier (6.9):
+	 * this build keeps the panel always on, register nothing. */
 #endif
 
 	return 0;
