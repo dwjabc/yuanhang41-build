@@ -24,6 +24,7 @@ extern struct spi_device *gcore_spi_slave;
 #include <linux/input/mt.h>
 #include <linux/of_irq.h>
 #include <linux/gpio.h>
+#include <linux/io.h>
 #include <linux/gpio/consumer.h>
 #include <linux/of.h>
 #include <linux/of_gpio.h>
@@ -1108,6 +1109,31 @@ static uint gcore_spi_speed = 10000000;
 module_param_named(speed, gcore_spi_speed, uint, 0644);
 MODULE_PARM_DESC(speed, "SPI clock in Hz, default 10000000");
 
+/* SPI_INF1_SYS_SEL matrix routing field (global ctrl reg7 bits 2-3 on the
+ * AON pin controller): nobody ever writes it in this tree because the
+ * sprd pinctrl mux skips GLOBAL_CTRL pins entirely. Set via
+ * gcore_ts.mux_sel=<0-3> to route controller 1 to the touch connector. */
+static int gcore_mux_sel = -1;
+module_param_named(mux_sel, gcore_mux_sel, int, 0644);
+MODULE_PARM_DESC(mux_sel, "SPI_INF1_SYS_SEL routing value 0-3, -1 = leave");
+
+static void gcore_apply_mux_sel(int v)
+{
+	void __iomem *base;
+	u32 reg;
+
+	base = ioremap(0x642e0000, 0x100);
+	if (!base) {
+		GTP_ERROR("mux_sel ioremap fail");
+		return;
+	}
+	reg = readl(base + 0x1c);
+	reg = (reg & ~0xC) | ((v & 3) << 2);
+	writel(reg, base + 0x1c);
+	GTP_INFO("SPI_INF1_SYS_SEL <- %d (reg 0x%08x)", v, reg);
+	iounmap(base);
+}
+
 /*
 * mtk spi use DMA mode when transfer length over 32 bytes.
 * out buffer should allocate DMA memory over 32 bytes.
@@ -1279,6 +1305,9 @@ static s32 gcore_spi_probe(struct spi_device *slave)
 
 	gcore_spi_slave = slave;
 	gcore_spi_config();
+
+	if (gcore_mux_sel >= 0)
+		gcore_apply_mux_sel(gcore_mux_sel);
 
 	/* GC7371 use rst pin and need init before use */
 #ifndef CONFIG_ENABLE_CHIP_TYPE_GC7371
