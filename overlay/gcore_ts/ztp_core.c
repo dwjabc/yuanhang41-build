@@ -1902,7 +1902,7 @@ void tpd_proc_deinit(void)
 }
 
 static ssize_t tpd_sysfs_fwimage_store(struct file *file,
-		struct kobject *kobj, struct bin_attribute *attr,
+		struct kobject *kobj, const struct bin_attribute *attr,
 		char *buf, loff_t pos, size_t count)
 {
 	struct ztp_device *cdev = tpd_cdev;
@@ -1931,7 +1931,7 @@ static ssize_t tpd_sysfs_fwimage_store(struct file *file,
 }
 
 static ssize_t tpd_sysfs_fwimage_show(struct file *file,
-		struct kobject *kobj, struct bin_attribute *attr,
+		struct kobject *kobj, const struct bin_attribute *attr,
 		char *buf, loff_t pos, size_t count)
 {
 	struct ztp_device *cdev = tpd_cdev;
@@ -2926,11 +2926,10 @@ static int zte_touch_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int  zte_touch_remove(struct platform_device *pdev)
+static void zte_touch_remove(struct platform_device *pdev)
 {
 	TPD_DMESG("enter\n");
 	zte_touch_deinit();
-	return 0;
 }
 
 static void zte_touch_shutdown(struct platform_device *pdev)
