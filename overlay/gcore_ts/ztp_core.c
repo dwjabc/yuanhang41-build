@@ -38,6 +38,7 @@ struct tp_ic_vendor_info tp_ic_vendor_info_l[] = {
 	{TS_CHIP_TLSC, "tlsc"},
 	{TS_CHIP_CHIPONE, "chipone"},
 	{TS_CHIP_GCORE, "galaxycore"},
+	{TS_CHIP_GCORE, "gc7202"},
 	{TS_CHIP_OMNIVISION, "omnivision"},
 	{TS_CHIP_BTL, "btltp"},
 	{TS_CHIP_SEMI, "semi"},

@@ -15,7 +15,7 @@ HDRS = ('gcore_drv_common.h', 'gcore_drv_firmware.h', 'gcore_ioctl.h',
         'gcore_firmware_config.h', 'ztp_common.h', 'ztp_ufp.h', 'ztp_core.h',
         'zte_tpd.h')
 
-MAKEFILE = '''obj-$(CONFIG_TOUCHSCREEN_GCORE) += gcore_ts.o
+MAKEFILE = '''obj-$(CONFIG_TOUCHSCREEN_GCORE_TS) += gcore_ts.o
 gcore_ts-y := gcore_drv_main.o gcore_drv_interface.o \\
 \tgcore_common_interface.o gcore_drv_fw_update.o gcore_drv_mp_test.o \\
 \tgcore_drv_qcom.o ztp_core.o lcd_state_notify.o ztp_report_algo.o \\
@@ -24,7 +24,7 @@ gcore_ts-y := gcore_drv_main.o gcore_drv_interface.o \\
 # gcore_firmware_config.h; adding them here too would double-define.
 '''
 
-KCONFIG = '''config TOUCHSCREEN_GCORE
+KCONFIG = '''config TOUCHSCREEN_GCORE_TS
 \ttristate "Gcore GC7202 SPI touchscreen (ZTE 7541N)"
 \tdepends on SPI_MASTER && GPIOLIB && INPUT
 \tselect INPUT_MT
