@@ -18,6 +18,8 @@
 
 #include "gcore_drv_common.h"
 
+extern struct spi_device *gcore_spi_slave;
+
 #include <linux/input.h>
 #include <linux/input/mt.h>
 #include <linux/of_irq.h>
