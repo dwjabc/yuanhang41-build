@@ -1636,161 +1636,134 @@ static ssize_t tp_BBAT_test_write(struct file *file,
 }
 
 static const struct proc_ops proc_ops_tp_module_Info = {
-	.owner = THIS_MODULE,
 	.proc_read = tp_module_info_read,
 };
 static const struct proc_ops proc_ops_wake_gesture = {
-	.owner = THIS_MODULE,
 	.proc_read = tp_wake_gesture_read,
 	.proc_write = tp_wake_gesture_write,
 };
 static const struct proc_ops proc_ops_smart_cover = {
-	.owner = THIS_MODULE,
 	.proc_read = tp_smart_cover_read,
 	.proc_write = tp_smart_cover_write,
 };
 
 static const struct proc_ops proc_ops_glove = {
-	.owner = THIS_MODULE,
 	.proc_read = tp_glove_read,
 	.proc_write = tp_glove_write,
 };
 
 static const struct proc_ops proc_ops_tpfwupgrade = {
-	.owner = THIS_MODULE,
 	.proc_write = tpfwupgrade_store,
 };
 
 static const struct proc_ops proc_ops_suspend = {
-	.owner = THIS_MODULE,
 	.proc_read = suspend_show,
 	.proc_write = suspend_store,
 };
 
 static const struct proc_ops proc_ops_headset_state = {
-	.owner = THIS_MODULE,
 	.proc_read = headset_state_show,
 	.proc_write = headset_state_store,
 };
 
 static const struct proc_ops proc_ops_mrotation = {
-	.owner = THIS_MODULE,
 	.proc_read = display_rotation_show,
 	.proc_write = set_display_rotation,
 };
 
 static const struct proc_ops proc_ops_single_tap = {
-	.owner = THIS_MODULE,
 	.proc_read = tp_single_tap_read,
 	.proc_write = tp_single_tap_write,
 };
 
 static const struct proc_ops proc_ops_single_aod = {
-	.owner = THIS_MODULE,
 	.proc_read = tp_single_aod_read,
 	.proc_write = tp_single_aod_write,
 };
 
 static const struct proc_ops proc_ops_get_noise = {
-	.owner = THIS_MODULE,
 	.proc_read = get_tp_noise_show,
 	.proc_write = get_tp_noise_store,
 };
 
 static const struct proc_ops proc_ops_edge_report_limit = {
-	.owner = THIS_MODULE,
 	.proc_read = tp_edge_report_limit_read,
 	.proc_write = tp_edge_report_limit_write,
 };
 
 static const struct proc_ops proc_ops_onekey = {
-	.owner = THIS_MODULE,
 	.proc_read = get_one_key,
 	.proc_write = set_one_key,
 };
 
 static const struct proc_ops proc_ops_playgame = {
-	.owner = THIS_MODULE,
 	.proc_read = get_play_game,
 	.proc_write = set_play_game,
 };
 
 static const struct proc_ops proc_ops_tp_report_rate = {
-	.owner = THIS_MODULE,
 	.proc_read = get_tp_report_rate,
 	.proc_write = set_tp_report_rate,
 };
 
 static const struct proc_ops proc_ops_sensibility_level = {
-	.owner = THIS_MODULE,
 	.proc_read = tp_sensibility_level_read,
 	.proc_write = tp_sensibility_level_write,
 };
 
 static const struct proc_ops proc_ops_pen_only = {
-	.owner = THIS_MODULE,
 	.proc_read = tp_pen_only_read,
 	.proc_write = tp_pen_only_write,
 };
 
 static const struct proc_ops proc_ops_tp_self_test = {
-	.owner = THIS_MODULE,
 	.proc_read = tp_self_test_read,
 	.proc_write = tp_self_test_write,
 };
 
 static const struct proc_ops proc_ops_finger_lock_flag = {
-	.owner = THIS_MODULE,
 	.proc_read = get_finger_lock_flag,
 	.proc_write = set_finger_lock_flag,
 };
 
 static const struct proc_ops proc_ops_zlog_debug = {
-	.owner = THIS_MODULE,
 	.proc_read = tp_zlog_debug_read,
 	.proc_write = tp_zlog_debug_write,
 };
 
 static const struct proc_ops proc_ops_debug_log_enable = {
-	.owner = THIS_MODULE,
 	.proc_read = tp_debug_log_enable_read,
 	.proc_write = tp_debug_log_enable_write,
 };
 
 static const struct proc_ops proc_ops_palm_mode = {
-	.owner = THIS_MODULE,
 	.proc_read = tp_palm_mode_read,
 	.proc_write = tp_palm_mode_write,
 };
 
 static const struct proc_ops proc_ops_rotation_limit_level = {
-	.owner = THIS_MODULE,
 	.proc_read = get_rotation_limit_level,
 	.proc_write = set_rotation_limit_level,
 };
 
 static const struct proc_ops proc_ops_ghost_debug = {
-	.owner = THIS_MODULE,
 	.proc_read = ghost_debug_read,
 	.proc_write = ghost_debug_write,
 };
 
 #ifdef CONFIG_TOUCHSCREEN_KNUCKLE
 static const struct proc_ops proc_ops_tp_roi_enable = {
-	.owner = THIS_MODULE,
 	.proc_read = tp_roi_enable_read,
 	.proc_write = tp_roi_enable_write,
 };
 
 static const struct proc_ops proc_ops_tp_roi_diffdata = {
-	.owner = THIS_MODULE,
 	.proc_read = tp_roi_diffdata_read,
 	.proc_write = tp_roi_diffdata_write,
 };
 #endif
 
 static const struct proc_ops proc_ops_BBAT_test = {
-	.owner = THIS_MODULE,
 	.proc_read = tp_BBAT_test_read,
 	.proc_write = tp_BBAT_test_write,
 };
