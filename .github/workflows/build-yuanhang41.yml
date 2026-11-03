@@ -54,7 +54,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential python3 curl ca-certificates \
-            clang lld llvm \
+            clang lld llvm ccache \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             flex bison bc cpio \
             libssl-dev libelf-dev \
@@ -66,6 +66,18 @@ jobs:
           # gcc-13's -Wmisleading-indentation trips on released test fixtures,
           # clang (which the kernel build itself uses, LLVM=1) does not.
           sudo ln -sf "$(command -v clang)" /usr/bin/cc
+          ccache --set-config=max_size=2G
+          ccache --set-config=sloppiness=file_macro,locale,time_macros
+          ccache -z
+
+      - name: Restore ccache object cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-kernel-${{ env.KERNEL_REF }}-${{ hashFiles('overlay/phy-sprd-qogirn6pro.c', 'overlay/gcore_ts/*', 'overlay-devices/yuanhang41/kernel.config') }}
+          restore-keys: |
+            ccache-kernel-${{ env.KERNEL_REF }}-
+            ccache-kernel-
 
       - name: Restore build inputs from release assets
         env:
@@ -104,6 +116,14 @@ jobs:
         if: inputs.skip_kernel != true
         run: |
           bash build.sh kernel
+          ccache -s || true
+
+      - name: Save ccache (post-build, always)
+        if: always() && inputs.skip_kernel != true
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-kernel-${{ env.KERNEL_REF }}-${{ github.run_id }}
 
       - name: Snapshot kernel artifacts (any result)
         if: always() && inputs.skip_kernel != true

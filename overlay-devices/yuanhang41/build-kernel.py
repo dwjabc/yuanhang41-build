@@ -57,7 +57,13 @@ def main(*, profile='yuanhang41', here=HERE):
     # a persistent duplicate root. Only the delivery module cohort is staged.
     (build/'.config').write_text(wanted)
     env=dict(os.environ,LOCALVERSION='')
-    command=['make','-C',str(kernel),'O='+str(build),'ARCH=arm64','LLVM=1','LLVM_IAS=1','CROSS_COMPILE=aarch64-linux-gnu-']
+    # ccache in front of clang when available: CI runners are fresh
+    # containers, so the object cache travels via actions/cache.
+    cc='clang'
+    if shutil.which('ccache'):
+        cc='ccache clang'
+    command=['make','-C',str(kernel),'O='+str(build),'ARCH=arm64','LLVM=1','LLVM_IAS=1',
+             'CROSS_COMPILE=aarch64-linux-gnu-','CC='+cc]
     subprocess.run(command+['olddefconfig'],env=env,check=True)
     subprocess.run(command+['-j'+str(args.jobs),'Image','modules'],env=env,check=True)
     release=(build/'include/config/kernel.release').read_text().strip()
