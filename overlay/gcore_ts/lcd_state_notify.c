@@ -4,7 +4,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 
-#ifdef CONFIG_TOUCHSCREEN_LCD_NOTIFY
+/* staged for built-in use: the LCD_NOTIFY gate is always on here */
 static BLOCKING_NOTIFIER_HEAD(lcd_notifier_list);
 static BLOCKING_NOTIFIER_HEAD(tpd_notifier_list);
 
@@ -64,5 +64,4 @@ module_exit(lcd_state_notify_exit);
 MODULE_AUTHOR("zte");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("lcd state notify");
-#endif
 
