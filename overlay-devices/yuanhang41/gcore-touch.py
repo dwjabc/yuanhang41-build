@@ -8,13 +8,15 @@ from pathlib import Path
 
 SRCS = ('gcore_drv_main.c', 'gcore_drv_interface.c',
         'gcore_common_interface.c', 'gcore_drv_fw_update.c',
-        'gcore_drv_mp_test.c')
+        'gcore_drv_mp_test.c', 'ztp_core.c', 'ztp_state_change.c', 'ztp_ufp.c')
 HDRS = ('gcore_drv_common.h', 'gcore_drv_firmware.h', 'gcore_ioctl.h',
-        'gcore_firmware_config.h', 'ztp_common.h', 'ztp_ufp.h', 'zte_tpd.h')
+        'gcore_firmware_config.h', 'ztp_common.h', 'ztp_ufp.h', 'ztp_core.h',
+        'zte_tpd.h')
 
 MAKEFILE = '''obj-$(CONFIG_TOUCHSCREEN_GCORE) += gcore_ts.o
 gcore_ts-y := gcore_drv_main.o gcore_drv_interface.o \\
-\tgcore_common_interface.o gcore_drv_fw_update.o gcore_drv_mp_test.o
+\tgcore_common_interface.o gcore_drv_fw_update.o gcore_drv_mp_test.o \\
+\tztp_core.o ztp_state_change.o ztp_ufp.o
 # chip type / Type-B protocol / SPI transport come from the staged
 # gcore_firmware_config.h; adding them here too would double-define.
 '''
