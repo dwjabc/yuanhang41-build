@@ -21,6 +21,20 @@ case ${1:?stage: kernel|rootfs|boot|repack} in
 
 kernel)
     cd "$REPO"
+    echo "== staging qogirn6pro USB2 (HS) phy driver for the MUSB controller =="
+    PH=$KERNEL/drivers/usb/phy/phy-sprd-qogirn6pro.c
+    if [ ! -f "$PH" ]; then
+        cp "$TOP/overlay/phy-sprd-qogirn6pro.c" "$PH"
+        grep -q "SPRD_QOGIRN6PRO_USB2_PHY" "$KERNEL/drivers/usb/phy/Kconfig" || cat >> "$KERNEL/drivers/usb/phy/Kconfig" << 'KC'
+
+config SPRD_QOGIRN6PRO_USB2_PHY
+	tristate "Spreadtrum Qogirn6pro USB2 PHY Driver"
+	depends on (ARCH_SPRD || COMPILE_TEST) && EXTCON
+	help
+	  Enable this to support the SPRD QOGIRN6PRO USB2 PHY that is part of SOC.
+KC
+        grep -q "SPRD_QOGIRN6PRO_USB2_PHY" "$KERNEL/drivers/usb/phy/Makefile" ||             echo 'obj-$(CONFIG_SPRD_QOGIRN6PRO_USB2_PHY)	+= phy-sprd-qogirn6pro.o' >> "$KERNEL/drivers/usb/phy/Makefile"
+    fi
     echo "== building kernel (jobs=$JOBS) =="
     python3 devices/yuanhang41/build-kernel.py \
         --kernel "$KERNEL" \
