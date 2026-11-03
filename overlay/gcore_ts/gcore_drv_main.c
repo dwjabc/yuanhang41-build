@@ -769,7 +769,7 @@ int gcore_probe_device(void)
 		}
 	}
 
-	while (retries++ < 5) {
+	while (retries++ < 20) {  /* 20s window covers late panel power-on */
 		gcore_idm_read_id(buf, sizeof(buf));
 
 		id = (buf[1] << 8) | buf[2];
@@ -1098,6 +1098,16 @@ static struct i2c_driver tpd_i2c_driver = {
 
 struct spi_device *gcore_spi_slave = NULL;
 
+/* empirical tuning knobs: gcore_ts.mode=<0-3> gcore_ts.speed=<hz> on the
+ * kernel cmdline let us sweep SPI mode and clock without rebuilding. */
+static int gcore_spi_mode = 3;
+module_param_named(mode, gcore_spi_mode, int, 0644);
+MODULE_PARM_DESC(mode, "SPI mode (0-3), default 3");
+
+static uint gcore_spi_speed = 10000000;
+module_param_named(speed, gcore_spi_speed, uint, 0644);
+MODULE_PARM_DESC(speed, "SPI clock in Hz, default 10000000");
+
 /*
 * mtk spi use DMA mode when transfer length over 32 bytes.
 * out buffer should allocate DMA memory over 32 bytes.
@@ -1252,9 +1262,9 @@ void gcore_spi_config(void)
 #endif
 #endif
 
-	gcore_spi_slave->mode = SPI_MODE_3;
+	gcore_spi_slave->mode = gcore_spi_mode;
 	gcore_spi_slave->bits_per_word = 8;
-	gcore_spi_slave->max_speed_hz = 10000000;
+	gcore_spi_slave->max_speed_hz = gcore_spi_speed;
 	/* chip_select became a multi-CS array in 6.12; the DT reg=0 wiring
 	 * already selects the line, so leave the core to set it. */
 	spi_setup(gcore_spi_slave);
