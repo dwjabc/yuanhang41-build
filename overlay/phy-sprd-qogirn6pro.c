@@ -741,7 +741,15 @@ static int sprd_hsphy_probe(struct platform_device *pdev)
 		goto platform_device_err;
 	}
 
-	ret = regulator_set_voltage(phy->vdd, phy->vdd_vol, phy->vdd_vol);
+	/*
+	 * LDO_VDDUSB33 is shared with ssphy (sprd,qogirn6pro-ssphy), whose
+	 * DT asks for exactly 3300000 uV and probes first. An exact
+	 * [vdd_vol, vdd_vol] request conflicts with that consumer constraint
+	 * and fails with -EINVAL, so allow the rail to settle anywhere from
+	 * our nominal voltage up to the USB 3.3V rail the ssphy selects.
+	 */
+	ret = regulator_set_voltage(phy->vdd, phy->vdd_vol,
+				    max(phy->vdd_vol, 3300000u));
 	if (ret < 0) {
 		dev_err(dev, "fail to set hsphy vdd voltage at %dmV\n",
 			phy->vdd_vol);
