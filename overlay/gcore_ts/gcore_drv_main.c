@@ -1043,8 +1043,8 @@ static s32 gcore_i2c_probe(struct i2c_client *client, const struct i2c_device_id
 	/* GC7371 use rst pin and need init before use */
 #ifndef CONFIG_ENABLE_CHIP_TYPE_GC7371
 	if (gcore_probe_device()) {
-		GTP_ERROR("gcore probe device fail!");
-		return -EPERM;
+		GTP_ERROR("gcore probe device fail, deferring");
+		return -EPROBE_DEFER;
 	}
 #endif
 
@@ -1275,7 +1275,7 @@ static s32 gcore_spi_probe(struct spi_device *slave)
 {
 	struct gcore_dev *touch_dev = NULL;
 
-	GTP_DEBUG("tpd_spi_probe start.");
+	GTP_DEBUG("tpd_spi_probe start mode=%d speed=%u", gcore_spi_mode, gcore_spi_speed);
 
 	gcore_spi_slave = slave;
 	gcore_spi_config();
@@ -1283,8 +1283,8 @@ static s32 gcore_spi_probe(struct spi_device *slave)
 	/* GC7371 use rst pin and need init before use */
 #ifndef CONFIG_ENABLE_CHIP_TYPE_GC7371
 	if (gcore_probe_device()) {
-		GTP_ERROR("gcore probe device fail!");
-		return -EPERM;
+		GTP_ERROR("gcore probe device fail, deferring");
+		return -EPROBE_DEFER;
 	}
 #endif
 
