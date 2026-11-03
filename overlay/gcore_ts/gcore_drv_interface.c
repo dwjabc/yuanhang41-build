@@ -32,12 +32,10 @@ static int gcore_app_open(struct inode *inode, struct file *file);
 static ssize_t gcore_app_read(struct file *file, char __user *buffer, size_t count, loff_t *ppos);
 static long gcore_app_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
 
-struct file_operations gcore_app_fops = {
-	.open = gcore_app_open,
-	.read = gcore_app_read,
-	.write = NULL,
-	.unlocked_ioctl = gcore_app_ioctl,
-	.compat_ioctl = gcore_app_ioctl,
+struct proc_ops gcore_app_fops = {
+	.proc_open = gcore_app_open,
+	.proc_read = gcore_app_read,
+	.proc_ioctl = gcore_app_ioctl,
 };
 
 struct proc_dir_entry *gcore_proc_entry = NULL;
@@ -284,8 +282,8 @@ struct proc_dir_entry *gcore_mp_entry;
 
 static ssize_t gcore_selftest_read(struct file *file, char __user *buffer, size_t count, loff_t *ppos);
 
-struct file_operations gcore_selftest_fops = {
-	.read = gcore_selftest_read,
+struct proc_ops gcore_selftest_fops = {
+	.proc_read = gcore_selftest_read,
 };
 
 ssize_t gcore_selftest_read(struct file *file, char __user *buffer, size_t count, loff_t *ppos)
