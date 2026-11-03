@@ -36,7 +36,7 @@ KC
         grep -q "SPRD_QOGIRN6PRO_USB2_PHY" "$KERNEL/drivers/usb/phy/Makefile" ||             echo 'obj-$(CONFIG_SPRD_QOGIRN6PRO_USB2_PHY)	+= phy-sprd-qogirn6pro.o' >> "$KERNEL/drivers/usb/phy/Makefile"
     fi
     echo "== staging gcore GC7202 touchscreen driver (ZTE 7541N panel) =="
-    python3 overlay-devices/yuanhang41/gcore-touch.py "$KERNEL"
+    python3 "$TOP/overlay-devices/yuanhang41/gcore-touch.py" "$KERNEL"
     echo "== building kernel (jobs=$JOBS) =="
     python3 devices/yuanhang41/build-kernel.py \
         --kernel "$KERNEL" \
