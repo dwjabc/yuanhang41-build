@@ -1234,7 +1234,8 @@ void gcore_spi_config(void)
 	gcore_spi_slave->mode = SPI_MODE_3;
 	gcore_spi_slave->bits_per_word = 8;
 	gcore_spi_slave->max_speed_hz = 10000000;
-	gcore_spi_slave->chip_select = 0;
+	/* chip_select became a multi-CS array in 6.12; the DT reg=0 wiring
+	 * already selects the line, so leave the core to set it. */
 	spi_setup(gcore_spi_slave);
 
 }
