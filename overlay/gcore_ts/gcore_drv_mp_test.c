@@ -1336,7 +1336,7 @@ int gcore_start_mp_test(void)
 
 static int32_t gcore_mp_test_open(struct inode *inode, struct file *file)
 {
-	struct gcore_mp_data *mp_data = PDE_DATA(inode);
+	struct gcore_mp_data *mp_data = pde_data(inode);
 	int ret = 0;
 
 	if (mp_data == NULL) {
@@ -1406,12 +1406,11 @@ static int32_t gcore_mp_test_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
-struct file_operations gcore_mp_fops = {
-	.owner = THIS_MODULE,
-	.open = gcore_mp_test_open,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.release = seq_release,
+struct proc_ops gcore_mp_fops = {
+	.proc_open = gcore_mp_test_open,
+	.proc_read = seq_read,
+	.proc_lseek = seq_lseek,
+	.proc_release = seq_release,
 };
 
 int gcore_mp_test_fn_init(struct gcore_dev *gdev)
