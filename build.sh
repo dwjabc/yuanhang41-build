@@ -35,6 +35,8 @@ config SPRD_QOGIRN6PRO_USB2_PHY
 KC
         grep -q "SPRD_QOGIRN6PRO_USB2_PHY" "$KERNEL/drivers/usb/phy/Makefile" ||             echo 'obj-$(CONFIG_SPRD_QOGIRN6PRO_USB2_PHY)	+= phy-sprd-qogirn6pro.o' >> "$KERNEL/drivers/usb/phy/Makefile"
     fi
+    echo "== staging gcore GC7202 touchscreen driver (ZTE 7541N panel) =="
+    python3 overlay-devices/yuanhang41/gcore-touch.py "$KERNEL"
     echo "== building kernel (jobs=$JOBS) =="
     python3 devices/yuanhang41/build-kernel.py \
         --kernel "$KERNEL" \
@@ -76,6 +78,12 @@ rootfs)
     echo "rm /etc/e5/device-model" >> "$CMDS"
     printf '中兴远航41\n' > "$N/device-model"
     echo "write $N/device-model /etc/e5/device-model" >> "$CMDS"
+    # GC7202 touch firmware: the driver requests
+    # gcore_firmware_<vendor>.bin from /lib/firmware at boot.
+    echo "write $TOP/overlay/gcore_firmware_skyworth.bin /lib/firmware/gcore_firmware_skyworth.bin" >> "$CMDS"
+    echo "sif /lib/firmware/gcore_firmware_skyworth.bin uid 0" >> "$CMDS"
+    echo "sif /lib/firmware/gcore_firmware_skyworth.bin gid 0" >> "$CMDS"
+    echo "sif /lib/firmware/gcore_firmware_skyworth.bin mode 0100644" >> "$CMDS"
     debugfs -w -f "$CMDS" "$IMG" > "$N/fs-log1" 2>&1
     ! grep -iE 'error|not found|cannot|failed' "$N/fs-log1" || { cat "$N/fs-log1"; exit 1; }
 
