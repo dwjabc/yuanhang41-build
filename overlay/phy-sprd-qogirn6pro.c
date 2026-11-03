@@ -329,8 +329,12 @@ static int sprd_hsphy_init(struct usb_phy *x)
 		return 0;
 	}
 
-	/* Turn On VDD */
-	regulator_set_voltage(phy->vdd, phy->vdd_vol, phy->vdd_vol);
+	/* Turn On VDD. The rail is shared with ssphy, which requests an
+	 * exact 3300000 uV: an exact [vdd_vol, vdd_vol] request here fails
+	 * with -EINVAL (consumer conflict), so ask for a range instead.
+	 */
+	regulator_set_voltage(phy->vdd, phy->vdd_vol,
+			      max(phy->vdd_vol, 3300000u));
 	ret = regulator_enable(phy->vdd);
 	if (ret) {
 		dev_info(x->dev, "regulator_enable failed %d \n", ret);
@@ -338,6 +342,16 @@ static int sprd_hsphy_init(struct usb_phy *x)
 	}
 
 	sprd_usbm_hsphy_set_onoff(1);
+
+	/*
+	 * The typec controller can notify "other" (charger block) after
+	 * this driver's probe ran its BC1.2 detect and before the gadget
+	 * starts -- a probe-order race that leaves DP/DM muxed away from
+	 * the phy forever: the soft-connected gadget then never sees the
+	 * host. Take the lines back whenever the phy is initialized for
+	 * USB operation; charger detection re-muxes them itself.
+	 */
+	sc27xx_dpdm_switch_to_phy(phy->pmic, true);
 
 	if (sprd_usbm_event_is_active()) {
 		/* select the AON-SYS USB controller */
