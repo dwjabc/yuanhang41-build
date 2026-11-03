@@ -1279,7 +1279,7 @@ static ssize_t tp_zlog_debug_write(struct file *file,
 		break;
 	case TP_ESD_CHECK_ERROR_NO:
 		tpd_zlog_record_notify(TP_ESD_CHECK_ERROR_NO);
-		tpd_notifier_call_chain(TP_ESD_CHECK_ERROR);
+		tpd_notifier_call_chain(TP_ESD_CHECK_ERROR_NO);
 		break;
 	case TP_PROBE_ERROR_NO:
 		tpd_zlog_record_notify(TP_PROBE_ERROR_NO);
@@ -1635,164 +1635,164 @@ static ssize_t tp_BBAT_test_write(struct file *file,
 	return len;
 }
 
-static const struct file_operations proc_ops_tp_module_Info = {
+static const struct proc_ops proc_ops_tp_module_Info = {
 	.owner = THIS_MODULE,
-	.read = tp_module_info_read,
+	.proc_read = tp_module_info_read,
 };
-static const struct file_operations proc_ops_wake_gesture = {
+static const struct proc_ops proc_ops_wake_gesture = {
 	.owner = THIS_MODULE,
-	.read = tp_wake_gesture_read,
-	.write = tp_wake_gesture_write,
+	.proc_read = tp_wake_gesture_read,
+	.proc_write = tp_wake_gesture_write,
 };
-static const struct file_operations proc_ops_smart_cover = {
+static const struct proc_ops proc_ops_smart_cover = {
 	.owner = THIS_MODULE,
-	.read = tp_smart_cover_read,
-	.write = tp_smart_cover_write,
-};
-
-static const struct file_operations proc_ops_glove = {
-	.owner = THIS_MODULE,
-	.read = tp_glove_read,
-	.write = tp_glove_write,
+	.proc_read = tp_smart_cover_read,
+	.proc_write = tp_smart_cover_write,
 };
 
-static const struct file_operations proc_ops_tpfwupgrade = {
+static const struct proc_ops proc_ops_glove = {
 	.owner = THIS_MODULE,
-	.write = tpfwupgrade_store,
+	.proc_read = tp_glove_read,
+	.proc_write = tp_glove_write,
 };
 
-static const struct file_operations proc_ops_suspend = {
+static const struct proc_ops proc_ops_tpfwupgrade = {
 	.owner = THIS_MODULE,
-	.read = suspend_show,
-	.write = suspend_store,
+	.proc_write = tpfwupgrade_store,
 };
 
-static const struct file_operations proc_ops_headset_state = {
+static const struct proc_ops proc_ops_suspend = {
 	.owner = THIS_MODULE,
-	.read = headset_state_show,
-	.write = headset_state_store,
+	.proc_read = suspend_show,
+	.proc_write = suspend_store,
 };
 
-static const struct file_operations proc_ops_mrotation = {
+static const struct proc_ops proc_ops_headset_state = {
 	.owner = THIS_MODULE,
-	.read = display_rotation_show,
-	.write = set_display_rotation,
+	.proc_read = headset_state_show,
+	.proc_write = headset_state_store,
 };
 
-static const struct file_operations proc_ops_single_tap = {
+static const struct proc_ops proc_ops_mrotation = {
 	.owner = THIS_MODULE,
-	.read = tp_single_tap_read,
-	.write = tp_single_tap_write,
+	.proc_read = display_rotation_show,
+	.proc_write = set_display_rotation,
 };
 
-static const struct file_operations proc_ops_single_aod = {
+static const struct proc_ops proc_ops_single_tap = {
 	.owner = THIS_MODULE,
-	.read = tp_single_aod_read,
-	.write = tp_single_aod_write,
+	.proc_read = tp_single_tap_read,
+	.proc_write = tp_single_tap_write,
 };
 
-static const struct file_operations proc_ops_get_noise = {
+static const struct proc_ops proc_ops_single_aod = {
 	.owner = THIS_MODULE,
-	.read = get_tp_noise_show,
-	.write = get_tp_noise_store,
+	.proc_read = tp_single_aod_read,
+	.proc_write = tp_single_aod_write,
 };
 
-static const struct file_operations proc_ops_edge_report_limit = {
+static const struct proc_ops proc_ops_get_noise = {
 	.owner = THIS_MODULE,
-	.read = tp_edge_report_limit_read,
-	.write = tp_edge_report_limit_write,
+	.proc_read = get_tp_noise_show,
+	.proc_write = get_tp_noise_store,
 };
 
-static const struct file_operations proc_ops_onekey = {
+static const struct proc_ops proc_ops_edge_report_limit = {
 	.owner = THIS_MODULE,
-	.read = get_one_key,
-	.write = set_one_key,
+	.proc_read = tp_edge_report_limit_read,
+	.proc_write = tp_edge_report_limit_write,
 };
 
-static const struct file_operations proc_ops_playgame = {
+static const struct proc_ops proc_ops_onekey = {
 	.owner = THIS_MODULE,
-	.read = get_play_game,
-	.write = set_play_game,
+	.proc_read = get_one_key,
+	.proc_write = set_one_key,
 };
 
-static const struct file_operations proc_ops_tp_report_rate = {
+static const struct proc_ops proc_ops_playgame = {
 	.owner = THIS_MODULE,
-	.read = get_tp_report_rate,
-	.write = set_tp_report_rate,
+	.proc_read = get_play_game,
+	.proc_write = set_play_game,
 };
 
-static const struct file_operations proc_ops_sensibility_level = {
+static const struct proc_ops proc_ops_tp_report_rate = {
 	.owner = THIS_MODULE,
-	.read = tp_sensibility_level_read,
-	.write = tp_sensibility_level_write,
+	.proc_read = get_tp_report_rate,
+	.proc_write = set_tp_report_rate,
 };
 
-static const struct file_operations proc_ops_pen_only = {
+static const struct proc_ops proc_ops_sensibility_level = {
 	.owner = THIS_MODULE,
-	.read = tp_pen_only_read,
-	.write = tp_pen_only_write,
+	.proc_read = tp_sensibility_level_read,
+	.proc_write = tp_sensibility_level_write,
 };
 
-static const struct file_operations proc_ops_tp_self_test = {
+static const struct proc_ops proc_ops_pen_only = {
 	.owner = THIS_MODULE,
-	.read = tp_self_test_read,
-	.write = tp_self_test_write,
+	.proc_read = tp_pen_only_read,
+	.proc_write = tp_pen_only_write,
 };
 
-static const struct file_operations proc_ops_finger_lock_flag = {
+static const struct proc_ops proc_ops_tp_self_test = {
 	.owner = THIS_MODULE,
-	.read = get_finger_lock_flag,
-	.write = set_finger_lock_flag,
+	.proc_read = tp_self_test_read,
+	.proc_write = tp_self_test_write,
 };
 
-static const struct file_operations proc_ops_zlog_debug = {
+static const struct proc_ops proc_ops_finger_lock_flag = {
 	.owner = THIS_MODULE,
-	.read = tp_zlog_debug_read,
-	.write = tp_zlog_debug_write,
+	.proc_read = get_finger_lock_flag,
+	.proc_write = set_finger_lock_flag,
 };
 
-static const struct file_operations proc_ops_debug_log_enable = {
+static const struct proc_ops proc_ops_zlog_debug = {
 	.owner = THIS_MODULE,
-	.read = tp_debug_log_enable_read,
-	.write = tp_debug_log_enable_write,
+	.proc_read = tp_zlog_debug_read,
+	.proc_write = tp_zlog_debug_write,
 };
 
-static const struct file_operations proc_ops_palm_mode = {
+static const struct proc_ops proc_ops_debug_log_enable = {
 	.owner = THIS_MODULE,
-	.read = tp_palm_mode_read,
-	.write = tp_palm_mode_write,
+	.proc_read = tp_debug_log_enable_read,
+	.proc_write = tp_debug_log_enable_write,
 };
 
-static const struct file_operations proc_ops_rotation_limit_level = {
+static const struct proc_ops proc_ops_palm_mode = {
 	.owner = THIS_MODULE,
-	.read = get_rotation_limit_level,
-	.write = set_rotation_limit_level,
+	.proc_read = tp_palm_mode_read,
+	.proc_write = tp_palm_mode_write,
 };
 
-static const struct file_operations proc_ops_ghost_debug = {
+static const struct proc_ops proc_ops_rotation_limit_level = {
 	.owner = THIS_MODULE,
-	.read = ghost_debug_read,
-	.write = ghost_debug_write,
+	.proc_read = get_rotation_limit_level,
+	.proc_write = set_rotation_limit_level,
+};
+
+static const struct proc_ops proc_ops_ghost_debug = {
+	.owner = THIS_MODULE,
+	.proc_read = ghost_debug_read,
+	.proc_write = ghost_debug_write,
 };
 
 #ifdef CONFIG_TOUCHSCREEN_KNUCKLE
-static const struct file_operations proc_ops_tp_roi_enable = {
+static const struct proc_ops proc_ops_tp_roi_enable = {
 	.owner = THIS_MODULE,
-	.read = tp_roi_enable_read,
-	.write = tp_roi_enable_write,
+	.proc_read = tp_roi_enable_read,
+	.proc_write = tp_roi_enable_write,
 };
 
-static const struct file_operations proc_ops_tp_roi_diffdata = {
+static const struct proc_ops proc_ops_tp_roi_diffdata = {
 	.owner = THIS_MODULE,
-	.read = tp_roi_diffdata_read,
-	.write = tp_roi_diffdata_write,
+	.proc_read = tp_roi_diffdata_read,
+	.proc_write = tp_roi_diffdata_write,
 };
 #endif
 
-static const struct file_operations proc_ops_BBAT_test = {
+static const struct proc_ops proc_ops_BBAT_test = {
 	.owner = THIS_MODULE,
-	.read = tp_BBAT_test_read,
-	.write = tp_BBAT_test_write,
+	.proc_read = tp_BBAT_test_read,
+	.proc_write = tp_BBAT_test_write,
 };
 
 static void create_tpd_proc_entry(void)
