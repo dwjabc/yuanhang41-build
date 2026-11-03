@@ -845,7 +845,7 @@ static int sprd_hsphy_probe(struct platform_device *pdev)
 	dev_dbg(dev, "sprd usb phy probe ok !\n");
 
 platform_device_err:
-	of_dev_put(regmap_pdev);
+	platform_device_put(regmap_pdev);
 device_node_err:
 	of_node_put(regmap_np);
 
@@ -853,7 +853,7 @@ device_node_err:
 
 }
 
-static int sprd_hsphy_remove(struct platform_device *pdev)
+static void sprd_hsphy_remove(struct platform_device *pdev)
 {
 	struct sprd_hsphy *phy = platform_get_drvdata(pdev);
 
@@ -862,8 +862,6 @@ static int sprd_hsphy_remove(struct platform_device *pdev)
 	usb_remove_phy(&phy->phy);
 	if (regulator_is_enabled(phy->vdd))
 		regulator_disable(phy->vdd);
-
-	return 0;
 }
 
 static void sprd_hsphy_drshutdown(struct platform_device *pdev)
