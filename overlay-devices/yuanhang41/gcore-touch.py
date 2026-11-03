@@ -7,16 +7,16 @@ its BTF consistent, and no rootfs autoload configuration is needed.
 from pathlib import Path
 
 SRCS = ('gcore_drv_main.c', 'gcore_drv_interface.c',
-        'gcore_common_interface.c', 'gcore_drv_fw_update.c')
-HDRS = ('gcore_drv_common.h', 'gcore_drv_firmware.h', 'gcore_ioctl.h')
+        'gcore_common_interface.c', 'gcore_drv_fw_update.c',
+        'gcore_drv_mp_test.c')
+HDRS = ('gcore_drv_common.h', 'gcore_drv_firmware.h', 'gcore_ioctl.h',
+        'gcore_firmware_config.h', 'ztp_common.h')
 
 MAKEFILE = '''obj-$(CONFIG_TOUCHSCREEN_GCORE) += gcore_ts.o
 gcore_ts-y := gcore_drv_main.o gcore_drv_interface.o \\
-\tgcore_common_interface.o gcore_drv_fw_update.o
-ccflags-$(CONFIG_TOUCHSCREEN_GCORE) += \\
-\t-DCONFIG_TOUCH_DRIVER_INTERFACE_SPI \\
-\t-DCONFIG_ENABLE_CHIP_TYPE_GC7202 \\
-\t-DCONFIG_ENABLE_TYPE_B_PROCOTOL
+\tgcore_common_interface.o gcore_drv_fw_update.o gcore_drv_mp_test.o
+# chip type / Type-B protocol / SPI transport come from the staged
+# gcore_firmware_config.h; adding them here too would double-define.
 '''
 
 KCONFIG = '''config TOUCHSCREEN_GCORE
