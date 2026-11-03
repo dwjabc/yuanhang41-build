@@ -174,11 +174,11 @@ void change_psensor_state(psensor_state psensor_state)
 		atomic_set(&current_psensor_state, ENABLE_PSENSOR);
 		break;
 	case PSENSOR_BEGIN_SUSPEND:
-		tpd_notifier_call_chain(PSENSOR_NOTIFY_LCD_SUSPEND);
+		tpd_notifier_call_chain(PSENSOR_BEGIN_SUSPEND);
 		atomic_set(&current_psensor_state, PSENSOR_BEGIN_SUSPEND);
 		break;
 	case PSENSOR_BEGIN_RESUME:
-		tpd_notifier_call_chain(PSENSOR_NOTIFY_LCD_RESUME);
+		tpd_notifier_call_chain(PSENSOR_BEGIN_RESUME);
 		atomic_set(&current_psensor_state, PSENSOR_BEGIN_RESUME);
 		break;
 	default:
