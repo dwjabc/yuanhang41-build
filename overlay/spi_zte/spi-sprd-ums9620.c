@@ -666,7 +666,7 @@ static void sprd_spi_dma_release(struct sprd_spi *ss)
 static int sprd_spi_dma_txrx_bufs(struct spi_device *sdev,
 				  struct spi_transfer *t)
 {
-	struct sprd_spi *ss = spi_master_get_devdata(sdev->master);
+	struct sprd_spi *ss = spi_controller_get_devdata(sdev->controller);
 	u32 trans_len = ss->trans_len, *dma_tmp_txbuf = NULL, val;
 	int ret = 0;
 
@@ -816,7 +816,7 @@ static void sprd_spi_init_hw(struct sprd_spi *ss, struct spi_transfer *t)
 	 * formula as below per datasheet:
 	 * interval time(source clock cycles) = 2 * clkd + itvl_num * 4 + 6.
 	 */
-	word_delay = clamp_t(u16, t->word_delay, SPRD_SPI_MIN_DELAY_CYCLE,
+	word_delay = clamp_t(u16, t->word_delay.value, SPRD_SPI_MIN_DELAY_CYCLE,
 			     SPRD_SPI_MAX_DELAY_CYCLE);
 	itvl_num = max_t(u16, DIV_ROUND_UP(word_delay - 10, 4),
 			 SPRD_SPI_ITVL_NUM);
@@ -1121,7 +1121,7 @@ static int sprd_spi_probe(struct platform_device *pdev)
 	int ret;
 
 	pdev->id = of_alias_get_id(pdev->dev.of_node, "spi");
-	sctlr = spi_alloc_master(&pdev->dev, sizeof(*ss));
+	sctlr = spi_alloc_host(&pdev->dev, sizeof(*ss));
 	if (!sctlr)
 		return -ENOMEM;
 
@@ -1207,7 +1207,7 @@ free_controller:
 	return ret;
 }
 
-static int sprd_spi_remove(struct platform_device *pdev)
+static void sprd_spi_remove(struct platform_device *pdev)
 {
 	struct spi_controller *sctlr = platform_get_drvdata(pdev);
 	struct sprd_spi *ss = spi_controller_get_devdata(sctlr);
@@ -1217,7 +1217,7 @@ static int sprd_spi_remove(struct platform_device *pdev)
 	if (ret < 0) {
 		pm_runtime_put_noidle(ss->dev);
 		dev_err(ss->dev, "failed to resume SPI controller\n");
-		return ret;
+		return;
 	}
 
 	spi_controller_suspend(sctlr);
@@ -1227,8 +1227,6 @@ static int sprd_spi_remove(struct platform_device *pdev)
 	clk_disable_unprepare(ss->clk);
 	pm_runtime_put_noidle(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
-
-	return 0;
 }
 
 static int __maybe_unused sprd_spi_runtime_suspend(struct device *dev)
@@ -1269,7 +1267,7 @@ static int __maybe_unused sprd_spi_suspend(struct device *dev)
 	struct spi_controller *sctlr = dev_get_drvdata(dev);
 	int ret;
 
-	ret = spi_master_suspend(sctlr);
+	ret = spi_controller_suspend(sctlr);
 	if (ret)
 		return ret;
 
@@ -1293,7 +1291,7 @@ static int __maybe_unused sprd_spi_resume(struct device *dev)
 		}
 	}
 
-	ret = spi_master_resume(sctlr);
+	ret = spi_controller_resume(sctlr);
 	if (ret)
 		clk_disable_unprepare(ss->clk);
 
