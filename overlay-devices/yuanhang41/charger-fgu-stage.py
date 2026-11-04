@@ -45,6 +45,25 @@ def apply(kernel):
     s = s.replace(old, new, 1)
 
     s = s.replace('"41S-SGM41513"', '"yh41-SGM41513"', 1)
+
+    # hw_init register writes can also hit the not-settled-yet I2C window
+    # (observed: reads pass at 4.48s, writes NACK at 4.50s, both fine later).
+    old = ('\tret = bq2560x_charger_hw_init(info);\n'
+           '\tif (ret) {\n'
+           '\t\tdev_err(dev, "failed to bq2560x_charger_hw_init\\n");\n'
+           '\t\tgoto err_psy_usb;\n'
+           '\t}')
+    new = ('\tret = bq2560x_charger_hw_init(info);\n'
+           '\tif (ret) {\n'
+           '\t\tdev_err(dev, "failed to bq2560x_charger_hw_init\\n");\n'
+           '\t\tif (ret == -EIO || ret == -EREMOTEIO || ret == -ENXIO ||\n'
+           '\t\t    ret == -ETIMEDOUT || ret == -EAGAIN)\n'
+           '\t\t\treturn -EPROBE_DEFER; /* I2C settling; retry */\n'
+           '\t\tgoto err_psy_usb;\n'
+           '\t}')
+    if s.count(old) != 1:
+        raise ValueError('hw_init error anchor changed')
+    s = s.replace(old, new, 1)
     charger.write_text(s, encoding='utf-8')
 
     fgu = kernel / 'drivers' / 'power' / 'supply' / 'sprd_fuel_gauge_core.c'
