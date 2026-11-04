@@ -765,37 +765,39 @@ int gcore_probe_device(void)
 		struct device_node *panel_np =
 			of_find_node_by_path("/soc/dpuvsp/dsi@31300000/panel");
 		static const char *const rails[] = { "iovdd", "avdd", "avee" };
-		static const int rail_step_us[] = { 10000, 5000, 5000 };
-		struct gpio_desc *rail_desc[3] = { NULL, NULL, NULL };
 		struct gpio_desc *rst;
 		int i;
 
 		if (!panel_np) {
 			GTP_ERROR("panel node missing; touch power sequence skipped");
 		} else {
+			/* iovdd is the one rail nobody claims on OpenWrt
+			 * (avdd/avee are raised by the panel driver); read
+			 * the gpio numbers straight from the DT property
+			 * <phandle gpio flags> and drive each one high. */
 			for (i = 0; i < 3; i++) {
-				struct device *panel_dev =
-					bus_find_device_by_of_node(
-						&platform_bus_type, panel_np);
+				u32 spec[3] = { 0, 0, 0 };
 				struct gpio_desc *rail;
 
-				if (!panel_dev) {
-					GTP_DEBUG("panel device missing");
-					break;
-				}
-				rail = gpiod_get(panel_dev, rails[i],
-						 GPIOD_OUT_HIGH);
-				if (IS_ERR(rail)) {
-					GTP_DEBUG("%s rail get failed: %ld",
-						  rails[i], PTR_ERR(rail));
-					put_device(panel_dev);
+				if (of_property_read_u32_array(panel_np,
+						rails[i], spec, 3)) {
+					GTP_DEBUG("%s property missing",
+						  rails[i]);
 					continue;
 				}
-				gpiod_put(rail); /* keep driven high */
-				put_device(panel_dev);
-				usleep_range(rail_step_us[i],
-					    rail_step_us[i] + 1000);
+				rail = gpio_to_desc(spec[1]);
+				if (!rail) {
+					GTP_DEBUG("%s: no desc for gpio %u",
+						  rails[i], spec[1]);
+					continue;
+				}
+				gpiod_direction_output(rail, 1);
+				gpiod_put(rail);
+				GTP_DEBUG("%s: gpio %u driven high",
+					  rails[i], spec[1]);
 			}
+			of_node_put(panel_np);
+			msleep(30);
 
 			rst = gpiod_get_optional(&gcore_spi_slave->dev,
 					"rst", GPIOD_OUT_HIGH);
