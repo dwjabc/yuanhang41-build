@@ -779,10 +779,13 @@ int gcore_probe_device(void)
 				u32 spec[3] = { 0, 0, 0 };
 				struct gpio_desc *rail;
 
+				char prop[32];
+
+				scnprintf(prop, sizeof(prop), "%s-gpio",
+					  rails[i]);
 				if (of_property_read_u32_array(panel_np,
-						rails[i], spec, 3)) {
-					GTP_DEBUG("%s property missing",
-						  rails[i]);
+						prop, spec, 3)) {
+					GTP_DEBUG("%s property missing", prop);
 					continue;
 				}
 				rail = gpio_to_desc(spec[1]);
