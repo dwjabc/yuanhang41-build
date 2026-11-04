@@ -36,6 +36,33 @@ def digest(path):
     return h.hexdigest()
 
 
+def retune_hotspot_defaults(stage):
+    """7541N delivery: hotspot defaults become Yuanhang41-OpenWrt / 12345678.
+
+    The upstream installer generates a random 10-char key and derives the
+    SSID from the profile map (yuanhang41s -> Yuanhang41S); override both
+    at the three generation points so every install path lands here."""
+    py = stage / 'OpenWrt-Installer.py'
+    s = py.read_text(encoding='utf-8')
+    old_map = "'yuanhang41s': 'Yuanhang41S'"
+    assert old_map in s, 'installer profile map anchor missing'
+    s = s.replace(old_map, "'yuanhang41s': 'Yuanhang41'")
+    old_key = ("key = ''.join(random.SystemRandom().choice("
+               "'abcdefghjkmnpqrstuvwxyz23456789') for _ in range(10))")
+    assert old_key in s, 'installer key generator anchor missing'
+    s = s.replace(old_key, "key = '12345678'")
+    py.write_text(s, encoding='utf-8', newline=chr(10))
+
+    pts = stage / 'scripts/installer/part-two-stage.py'
+    s = pts.read_text(encoding='utf-8')
+    old_key2 = "key = a.wifi_key or old.get('key', '') or uuid.uuid4().hex[:12]"
+    assert old_key2 in s, 'part-two-stage key anchor missing'
+    s = s.replace(old_key2,
+                  "key = a.wifi_key or old.get('key', '') or '12345678'")
+    pts.write_text(s, encoding='utf-8', newline=chr(10))
+
+
+
 def main():
     epoch = int(time.time())
     stamp = time.strftime('%Y%m%d.%H%M%S', time.gmtime(epoch))
@@ -55,6 +82,8 @@ def main():
         shutil.copy2(trial, STAGE / 'files/boot-misc-slot-b.bin')
     shutil.copy2(OUTDIR / 'yuanhang41-openwrt.ext4.gz', STAGE / 'files/openwrt.ext4.gz')
     shutil.copy2(KOUT / 'config', STAGE / 'files/kernel.config')
+
+    retune_hotspot_defaults(STAGE)
 
     modules_sha = {f'modules/{ko.name}': digest(ko)
                    for ko in sorted((KOUT / 'modules').glob('*.ko'))}
