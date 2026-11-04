@@ -46,49 +46,43 @@ def apply(kernel):
 
     s = s.replace('"41S-SGM41513"', '"yh41-SGM41513"', 1)
 
-    # hw_init register writes NACK for up to ~2 minutes on this unit while
-    # reads already work at 4.5s; the deferred-probe queue gives up around
-    # 30s. Probe asynchronously (probe_type on the i2c driver - this tree
-    # has no per-device async-probe API) and spin in the probe thread.
-    old = ('static struct i2c_driver bq2560x_charger_driver = {\n'
-           '\t.driver = {\n'
-           '\t\t.name = "bq2560x_chg",')
-    new = ('static struct i2c_driver bq2560x_charger_driver = {\n'
-           '\t.probe_type = PROBE_PREFER_ASYNCHRONOUS,\n'
-           '\t.driver = {\n'
-           '\t\t.name = "bq2560x_chg",')
-    if s.count(old) != 1:
-        raise ValueError('i2c_driver anchor changed')
-    s = s.replace(old, new, 1)
+    # This silicon (SGM41511 family, REG_B=0x14 at 0x6b) has NO register
+    # 0x0d: reads float to 0xff and writes NACK, which kills hw_init. The
+    # 41S termination-current coding (for the 0x1a SGM41513) writes it;
+    # restore the vendor REG03-only coding that this chip implements.
+    old = ("""    u8 code, offset = 0;
+    int ret = bq2560x_update_bits(info, 0x0d, BIT(0), cur > 240 ? 0 : BIT(0));
+    if (ret) return ret;
+    if (cur > 240) {
+        if (cur <= 360) { offset = 5; code = (cur - 240) / 60; }
+        else if (cur < 480) code = 7;
+        else if (cur <= 1200) { offset = 8; code = (cur - 480) / 120; }
+        else code = 15;
+    } else {
+        if (cur < 5) code = 0;
+        else if (cur <= 20) code = (cur - 5) / 5;
+        else if (cur <= 60) { offset = 3; code = (cur - 20) / 10; }
+        else if (cur < 80) code = 7;
+        else { offset = 8; code = (cur - 80) / 20; }
+    }
+    code = min_t(u8, code + offset, 15);
+    return bq2560x_update_bits(info, BQ2560X_REG_3,
+        BQ2560X_REG_TERMINAL_CUR_MASK, code);""")
+    new = ("""    u8 reg_val;
 
-    old = ('\tret = bq2560x_charger_hw_init(info);\n'
-           '\tif (ret) {\n'
-           '\t\tdev_err(dev, "failed to bq2560x_charger_hw_init\\n");\n'
-           '\t\tgoto err_psy_usb;\n'
-           '\t}')
-    new = ('\tret = bq2560x_charger_hw_init(info);\n'
-           '\tif (ret) {\n'
-           '\t\t/* yuanhang41: writes settle ~2min after reads on this unit;\n'
-           '\t\t * async probe keeps this off the boot path while we wait. */\n'
-           '\t\tint tries = 0;\n'
-           '\t\twhile ((ret == -EIO || ret == -EREMOTEIO || ret == -ENXIO ||\n'
-           '\t\t\tret == -ETIMEDOUT || ret == -EAGAIN) && tries < 24) {\n'
-           '\t\t\tmsleep(15000);\n'
-           '\t\t\tret = bq2560x_charger_hw_init(info);\n'
-           '\t\t\ttries++;\n'
-           '\t\t}\n'
-           '\t\tif (ret) {\n'
-           '\t\t\tdev_err(dev, "failed to bq2560x_charger_hw_init\\n");\n'
-           '\t\t\tgoto err_psy_usb;\n'
-           '\t\t}\n'
-           '\t}')
-    if s.count(old) != 1:
-        raise ValueError('hw_init error anchor changed')
-    s = s.replace(old, new, 1)
+    /* yuanhang41 silicon: REG 0x0d is not implemented - REG03 only. */
+    if (cur <= 60)
+        reg_val = 0x0;
+    else if (cur >= 480)
+        reg_val = 0x8;
+    else
+        reg_val = (cur - 60) / 60;
 
-    if '#include <linux/delay.h>' not in s:
-        s = s.replace('#include <linux/gpio/consumer.h>',
-                      '#include <linux/delay.h>\n#include <linux/gpio/consumer.h>', 1)
+    return bq2560x_update_bits(info, BQ2560X_REG_3,
+        BQ2560X_REG_TERMINAL_CUR_MASK, reg_val);""")
+    if s.count(old) != 1:
+        raise ValueError('41S termina_cur body anchor changed')
+    s = s.replace(old, new, 1)
     charger.write_text(s, encoding='utf-8')
 
     fgu = kernel / 'drivers' / 'power' / 'supply' / 'sprd_fuel_gauge_core.c'
