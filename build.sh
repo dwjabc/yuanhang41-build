@@ -80,6 +80,39 @@ rootfs)
     echo "rm /etc/e5/device-model" >> "$CMDS"
     printf '中兴远航41\n' > "$N/device-model"
     echo "write $N/device-model /etc/e5/device-model" >> "$CMDS"
+    # Battery display: the rootfs battery readers expect a "battery" psy
+    # alias that only the donor boards have. Our fuel gauge registers as
+    # sc27xx-fgu -- retarget the three readers at it.
+    BPD="$N/battery-patch"; rm -rf "$BPD"; mkdir -p "$BPD"
+    for f in usr/lib/e5/e5_charge.py usr/libexec/e5-charge-core.uc usr/libexec/e5-charge-screen; do
+        base=$(basename "$f")
+        debugfs -R "dump /$f $BPD/$base" "$IMG" > /dev/null 2>&1
+        if [ ! -s "$BPD/$base" ]; then
+            echo "SKIP absent: /$f"; rm -f "$BPD/$base"; continue
+        fi
+        sed -i 's#power_supply/battery#power_supply/sc27xx-fgu#g' "$BPD/$base"
+        grep -q 'power_supply/sc27xx-fgu' "$BPD/$base" || { echo "no battery path in /$f"; exit 1; }
+        echo "rm /$f" >> "$CMDS"
+        echo "write $BPD/$base /$f" >> "$CMDS"
+        echo "sif /$f uid 0" >> "$CMDS"
+        echo "sif /$f gid 0" >> "$CMDS"
+        echo "sif /$f mode 0100755" >> "$CMDS"
+        echo "patched: /$f"
+    done
+    ADP="$BPD/adapter.uc"
+    debugfs -R "dump /usr/libexec/unisoc-battery/adapter.uc $ADP" "$IMG" > /dev/null 2>&1
+    if [ -s "$ADP" ]; then
+        sed -i "s@snapshot(root, \['battery'\])@snapshot(root, ['sc27xx-fgu'])@" "$ADP"
+        grep -q "snapshot(root, \['sc27xx-fgu'\])" "$ADP" || { echo "adapter.uc anchor changed"; exit 1; }
+        echo "rm /usr/libexec/unisoc-battery/adapter.uc" >> "$CMDS"
+        echo "write $ADP /usr/libexec/unisoc-battery/adapter.uc" >> "$CMDS"
+        echo "sif /usr/libexec/unisoc-battery/adapter.uc uid 0" >> "$CMDS"
+        echo "sif /usr/libexec/unisoc-battery/adapter.uc gid 0" >> "$CMDS"
+        echo "sif /usr/libexec/unisoc-battery/adapter.uc mode 0100755" >> "$CMDS"
+        echo "patched: /usr/libexec/unisoc-battery/adapter.uc"
+    else
+        echo "SKIP absent: /usr/libexec/unisoc-battery/adapter.uc"
+    fi
     # GC7202 touch firmware: the driver requests
     # gcore_firmware_<vendor>.bin from /lib/firmware at boot.
     echo "write $TOP/overlay/gcore_firmware_skyworth.bin /lib/firmware/gcore_firmware_skyworth.bin" >> "$CMDS"
