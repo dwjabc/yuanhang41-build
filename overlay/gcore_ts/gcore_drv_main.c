@@ -750,11 +750,26 @@ int gcore_probe_device(void)
 	int retries = 0;
 	int ret = 0;
 
-	/* Android reads the chip id directly at probe - the GC7202 boots its
-	 * firmware from flash at power-on and answers GC4a03 with no host
-	 * reset. The earlier reset pulse here restarted the firmware and the
-	 * id then read 0000, so do NOT touch the reset line (it is shared
-	 * with the LCD reset the panel driver owns on the vendor side). */
+	/* On this board the touch is held in reset until the panel pipeline
+	 * starts, which on OpenWrt happens long after userspace is up - the
+	 * vendor probe runs at 5.4s and reads zeros. Pulse the reset GPIO
+	 * ourselves and retry with generous spacing so the chip is awake
+	 * whenever the rail comes up. */
+	{
+		struct gpio_desc *rst = gpiod_get_optional(&gcore_spi_slave->dev,
+						"rst", GPIOD_OUT_HIGH);
+		if (IS_ERR(rst)) {
+			GTP_ERROR("rst gpio get failed: %ld", PTR_ERR(rst));
+		} else if (rst) {
+			gpiod_set_value_cansleep(rst, 0);
+			msleep(20);
+			gpiod_set_value_cansleep(rst, 1);
+			msleep(120);
+			gpiod_put(rst);
+			GTP_DEBUG("rst pulsed before id read");
+		}
+	}
+
 	while (retries++ < 20) {  /* 20s window covers late panel power-on */
 		gcore_idm_read_id(buf, sizeof(buf));
 
