@@ -83,6 +83,14 @@ rootfs)
     # Battery display needs no rootfs edits: once the charger probes and
     # charger-manager binds, it publishes the "battery"/"ac"/"usb" psy
     # aliases the stock readers expect.
+    # Mount the orphaned charge-management card on the LuCI dashboard: the
+    # stock home.js never wires mu300.charge, so thresholds/limit control
+    # had no UI even with the ubus service healthy.
+    echo "rm /www/luci-static/resources/view/mu300/home.js" >> "$CMDS"
+    echo "write $TOP/overlay/home-charge-mount.js /www/luci-static/resources/view/mu300/home.js" >> "$CMDS"
+    echo "sif /www/luci-static/resources/view/mu300/home.js uid 0" >> "$CMDS"
+    echo "sif /www/luci-static/resources/view/mu300/home.js gid 0" >> "$CMDS"
+    echo "sif /www/luci-static/resources/view/mu300/home.js mode 0100644" >> "$CMDS"
     # GC7202 touch firmware: the driver requests
     # gcore_firmware_<vendor>.bin from /lib/firmware at boot.
     echo "write $TOP/overlay/gcore_firmware_skyworth.bin /lib/firmware/gcore_firmware_skyworth.bin" >> "$CMDS"
