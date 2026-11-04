@@ -1384,6 +1384,15 @@ static s32 gcore_spi_probe(struct spi_device *slave)
 		return -EPERM;
 	}
 
+	/* The i2c probe path registers the fw class (which resolves the
+	 * firmware file name) but the vendor spi path never did - on the
+	 * stock system LK downloads the PRAM firmware before the kernel,
+	 * so nothing needed it. Our boot chain relies on the kernel-side
+	 * HOSTDOWNLOAD, which requests the bin by name. */
+	gcore_register_fw_class();
+	tpd_cdev->TP_have_registered = true;
+	tpd_cdev->tp_chip_id = TS_CHIP_GCORE;
+
 	return 0;
 }
 
