@@ -772,6 +772,35 @@ int gcore_probe_device(void)
 		}
 	}
 
+	/* The TDDI panel rails (avdd/avee/iovdd, DT panel node) also feed the
+	 * touch section; iovdd in particular gates its IO buffers. On this
+	 * board the vendor panel driver raises them before the touch probe;
+	 * on OpenWrt nothing does - drive them high from here. */
+	{
+		struct device_node *panel_np =
+			of_find_node_by_path("/soc/dpuvsp/dsi@31300000/panel");
+		static const char *const rails[] = { "iovdd", "avdd", "avee" };
+		int i;
+
+		if (!panel_np) {
+			GTP_DEBUG("panel node missing; rails untouched");
+		} else {
+			for (i = 0; i < ARRAY_SIZE(rails); i++) {
+				struct gpio_desc *rail = gpiod_get_from_of_node(
+					panel_np, rails[i], 0, GPIOD_OUT_HIGH,
+					"gcore-rail");
+				if (IS_ERR(rail)) {
+					GTP_DEBUG("%s rail get failed: %ld",
+						  rails[i], PTR_ERR(rail));
+					continue;
+				}
+				GTP_DEBUG("%s rail driven high", rails[i]);
+			}
+			of_node_put(panel_np);
+			msleep(20);
+		}
+	}
+
 	while (retries++ < 20) {  /* 20s window covers late panel power-on */
 		gcore_idm_read_id(buf, sizeof(buf));
 
