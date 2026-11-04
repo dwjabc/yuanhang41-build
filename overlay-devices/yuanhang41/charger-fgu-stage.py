@@ -46,8 +46,17 @@ def apply(kernel):
 
     s = s.replace('"41S-SGM41513"', '"yh41-SGM41513"', 1)
 
-    # hw_init register writes can also hit the not-settled-yet I2C window
-    # (observed: reads pass at 4.48s, writes NACK at 4.50s, both fine later).
+    # hw_init register writes NACK for up to ~2 minutes on this unit while
+    # reads already work at 4.5s; the deferred-probe queue gives up around
+    # 30s. Probe asynchronously and spin here until the write path settles.
+    old = '\tinfo->client = client;\n\tinfo->dev = dev;'
+    new = ('\tinfo->client = client;\n'
+           '\tinfo->dev = dev;\n'
+           '\tdevice_enable_async_probe(dev);')
+    if s.count(old) != 1:
+        raise ValueError('probe info anchor changed')
+    s = s.replace(old, new, 1)
+
     old = ('\tret = bq2560x_charger_hw_init(info);\n'
            '\tif (ret) {\n'
            '\t\tdev_err(dev, "failed to bq2560x_charger_hw_init\\n");\n'
@@ -55,15 +64,27 @@ def apply(kernel):
            '\t}')
     new = ('\tret = bq2560x_charger_hw_init(info);\n'
            '\tif (ret) {\n'
-           '\t\tdev_err(dev, "failed to bq2560x_charger_hw_init\\n");\n'
-           '\t\tif (ret == -EIO || ret == -EREMOTEIO || ret == -ENXIO ||\n'
-           '\t\t    ret == -ETIMEDOUT || ret == -EAGAIN)\n'
-           '\t\t\treturn -EPROBE_DEFER; /* I2C settling; retry */\n'
-           '\t\tgoto err_psy_usb;\n'
+           '\t\t/* yuanhang41: writes settle ~2min after reads on this unit;\n'
+           '\t\t * async probe keeps this off the boot path while we wait. */\n'
+           '\t\tint tries = 0;\n'
+           '\t\twhile ((ret == -EIO || ret == -EREMOTEIO || ret == -ENXIO ||\n'
+           '\t\t\tret == -ETIMEDOUT || ret == -EAGAIN) && tries < 24) {\n'
+           '\t\t\tmsleep(15000);\n'
+           '\t\t\tret = bq2560x_charger_hw_init(info);\n'
+           '\t\t\ttries++;\n'
+           '\t\t}\n'
+           '\t\tif (ret) {\n'
+           '\t\t\tdev_err(dev, "failed to bq2560x_charger_hw_init\\n");\n'
+           '\t\t\tgoto err_psy_usb;\n'
+           '\t\t}\n'
            '\t}')
     if s.count(old) != 1:
         raise ValueError('hw_init error anchor changed')
     s = s.replace(old, new, 1)
+
+    if '#include <linux/delay.h>' not in s:
+        s = s.replace('#include <linux/gpio/consumer.h>',
+                      '#include <linux/delay.h>\n#include <linux/gpio/consumer.h>', 1)
     charger.write_text(s, encoding='utf-8')
 
     fgu = kernel / 'drivers' / 'power' / 'supply' / 'sprd_fuel_gauge_core.c'
