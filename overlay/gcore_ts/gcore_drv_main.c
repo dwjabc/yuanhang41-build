@@ -755,6 +755,23 @@ int gcore_probe_device(void)
 	 * reset. The earlier reset pulse here restarted the firmware and the
 	 * id then read 0000, so do NOT touch the reset line (it is shared
 	 * with the LCD reset the panel driver owns on the vendor side). */
+	/* The touch reset line is the TDDI panel-shared reset: on this board
+	 * nothing else drives it, and left floating the chip sits in reset
+	 * with every SPI read returning 0000 (Android holds it high from its
+	 * panel/tpd stack). Request it as OUTPUT HIGH and keep it deasserted
+	 * - no pulse, the firmware is already running from flash. */
+	{
+		struct gpio_desc *rst = gpiod_get_optional(&gcore_spi_slave->dev,
+						"rst", GPIOD_OUT_HIGH);
+		if (IS_ERR(rst)) {
+			GTP_ERROR("rst gpio get failed: %ld", PTR_ERR(rst));
+		} else if (rst) {
+			GTP_DEBUG("rst held deasserted before id read");
+		} else {
+			GTP_DEBUG("no rst gpio; continuing");
+		}
+	}
+
 	while (retries++ < 20) {  /* 20s window covers late panel power-on */
 		gcore_idm_read_id(buf, sizeof(buf));
 
