@@ -774,18 +774,28 @@ int gcore_probe_device(void)
 			GTP_ERROR("panel node missing; touch power sequence skipped");
 		} else {
 			for (i = 0; i < 3; i++) {
-				rail_desc[i] = gpiod_get_from_of_node(
-					panel_np, rails[i], 0, GPIOD_OUT_HIGH,
-					"gcore-rail");
-				if (IS_ERR(rail_desc[i])) {
-					GTP_DEBUG("%s rail get failed: %ld",
-						  rails[i], PTR_ERR(rail_desc[i]));
-					rail_desc[i] = NULL;
+				struct device *panel_dev =
+					bus_find_device_by_of_node(
+						&platform_bus_type, panel_np);
+				struct gpio_desc *rail;
+
+				if (!panel_dev) {
+					GTP_DEBUG("panel device missing");
+					break;
 				}
+				rail = gpiod_get(panel_dev, rails[i],
+						 GPIOD_OUT_HIGH);
+				if (IS_ERR(rail)) {
+					GTP_DEBUG("%s rail get failed: %ld",
+						  rails[i], PTR_ERR(rail));
+					put_device(panel_dev);
+					continue;
+				}
+				gpiod_put(rail); /* keep driven high */
+				put_device(panel_dev);
 				usleep_range(rail_step_us[i],
 					    rail_step_us[i] + 1000);
 			}
-			of_node_put(panel_np);
 
 			rst = gpiod_get_optional(&gcore_spi_slave->dev,
 					"rst", GPIOD_OUT_HIGH);
