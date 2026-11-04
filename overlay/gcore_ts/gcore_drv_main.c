@@ -776,28 +776,18 @@ int gcore_probe_device(void)
 			 * the gpio numbers straight from the DT property
 			 * <phandle gpio flags> and drive each one high. */
 			for (i = 0; i < 3; i++) {
-				u32 spec[3] = { 0, 0, 0 };
 				struct gpio_desc *rail;
 
-				char prop[32];
-
-				scnprintf(prop, sizeof(prop), "%s-gpio",
-					  rails[i]);
-				if (of_property_read_u32_array(panel_np,
-						prop, spec, 3)) {
-					GTP_DEBUG("%s property missing", prop);
+				rail = fwnode_gpiod_get_index(
+					of_fwnode_handle(panel_np), rails[i],
+					0, GPIOD_OUT_HIGH, "gcore-rail");
+				if (IS_ERR(rail)) {
+					GTP_DEBUG("%s rail get failed: %ld",
+						  rails[i], PTR_ERR(rail));
 					continue;
 				}
-				rail = gpio_to_desc(spec[1]);
-				if (!rail) {
-					GTP_DEBUG("%s: no desc for gpio %u",
-						  rails[i], spec[1]);
-					continue;
-				}
-				gpiod_direction_output(rail, 1);
-				gpiod_put(rail);
-				GTP_DEBUG("%s: gpio %u driven high",
-					  rails[i], spec[1]);
+				gpiod_put(rail); /* keep driven high */
+				GTP_DEBUG("%s driven high", rails[i]);
 			}
 			of_node_put(panel_np);
 			msleep(30);
