@@ -28,6 +28,7 @@ extern struct spi_device *gcore_spi_slave;
 #include <linux/gpio/consumer.h>
 #include <linux/of.h>
 #include <linux/of_gpio.h>
+#include <linux/gpio/machine.h>
 #include <linux/kthread.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
