@@ -48,13 +48,17 @@ def apply(kernel):
 
     # hw_init register writes NACK for up to ~2 minutes on this unit while
     # reads already work at 4.5s; the deferred-probe queue gives up around
-    # 30s. Probe asynchronously and spin here until the write path settles.
-    old = '\tinfo->client = client;\n\tinfo->dev = dev;'
-    new = ('\tinfo->client = client;\n'
-           '\tinfo->dev = dev;\n'
-           '\tdevice_enable_async_probe(dev);')
+    # 30s. Probe asynchronously (probe_type on the i2c driver - this tree
+    # has no per-device async-probe API) and spin in the probe thread.
+    old = ('static struct i2c_driver bq2560x_charger_driver = {\n'
+           '\t.driver = {\n'
+           '\t\t.name = "bq2560x_chg",')
+    new = ('static struct i2c_driver bq2560x_charger_driver = {\n'
+           '\t.probe_type = PROBE_PREFER_ASYNCHRONOUS,\n'
+           '\t.driver = {\n'
+           '\t\t.name = "bq2560x_chg",')
     if s.count(old) != 1:
-        raise ValueError('probe info anchor changed')
+        raise ValueError('i2c_driver anchor changed')
     s = s.replace(old, new, 1)
 
     old = ('\tret = bq2560x_charger_hw_init(info);\n'
