@@ -1527,6 +1527,7 @@ void set_hostdownload_idm(u8 value)
 
 #endif /* CONFIG_GCORE_AUTO_UPDATE_FW_HOSTDOWNLOAD */
 
+#ifdef CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD
 /*
 * Maybe can disable interupt before progress 6
 */
