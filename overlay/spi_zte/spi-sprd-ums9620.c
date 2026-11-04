@@ -1078,8 +1078,7 @@ static int sprd_spi_property_find(struct platform_device *pdev,
 {
 	struct sprd_spi *ss = spi_controller_get_devdata(sctlr);
 	struct property *prop;
-	u32 num_chipselect = 1;
-	u32 i, realtime_task, do_stay_value;
+	u32 realtime_task, do_stay_value;
 	int ret;
 
 	/* SPI controller transfer with high (realtime) thread priority. */
@@ -1107,45 +1106,9 @@ static int sprd_spi_property_find(struct platform_device *pdev,
 	} else
 		ss->do_stay_value = 2;
 
-	/* Set GPIOs as cs for SPI bus to hang devices. */
-	prop = of_find_property(pdev->dev.of_node, "cs-gpios", NULL);
-	if (prop && prop->length) {
-		ret = of_property_read_u32(pdev->dev.of_node,
-					   "num-chipselect", &num_chipselect);
-		if (ret < 0)
-			dev_warn(&pdev->dev,
-				 "num-chipselect property not found\n");
-		else
-			sctlr->num_chipselect = num_chipselect;
+	/* legacy cs-gpios int-array handling removed (6.12+ uses cs_gpiods);
+	 * our DTB has no cs-gpios property, so this path is dead code. */
 
-		sctlr->cs_gpios = devm_kzalloc(&pdev->dev,
-					sizeof(int) * sctlr->num_chipselect,
-					GFP_KERNEL);
-		if (!sctlr->cs_gpios)
-			return -ENOMEM;
-
-		for (i = 0; i < sctlr->num_chipselect; i++) {
-			sctlr->cs_gpios[i] = of_get_named_gpio(
-							pdev->dev.of_node,
-							"cs-gpios", i);
-			if (!gpio_is_valid(sctlr->cs_gpios[i]))
-				dev_err(&pdev->dev,
-					"get gpio for cs_gpios[%d] failed!\n",
-					i);
-			else {
-				ret = devm_gpio_request_one(&pdev->dev,
-							    sctlr->cs_gpios[i],
-							    GPIOF_OUT_INIT_HIGH,
-							    "sprd-spi");
-				if (ret) {
-					sctlr->cs_gpios[i] = ret;
-					dev_err(&pdev->dev,
-						"could not request cs gpio %d\n",
-						sctlr->cs_gpios[i]);
-				}
-			}
-		}
-	}
 
 	return 0;
 }
@@ -1244,7 +1207,7 @@ free_controller:
 	return ret;
 }
 
-static void sprd_spi_remove(struct platform_device *pdev)
+static int sprd_spi_remove(struct platform_device *pdev)
 {
 	struct spi_controller *sctlr = platform_get_drvdata(pdev);
 	struct sprd_spi *ss = spi_controller_get_devdata(sctlr);
@@ -1254,7 +1217,7 @@ static void sprd_spi_remove(struct platform_device *pdev)
 	if (ret < 0) {
 		pm_runtime_put_noidle(ss->dev);
 		dev_err(ss->dev, "failed to resume SPI controller\n");
-		return;
+		return ret;
 	}
 
 	spi_controller_suspend(sctlr);
@@ -1265,6 +1228,7 @@ static void sprd_spi_remove(struct platform_device *pdev)
 	pm_runtime_put_noidle(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
 
+	return 0;
 }
 
 static int __maybe_unused sprd_spi_runtime_suspend(struct device *dev)
@@ -1344,7 +1308,6 @@ static const struct dev_pm_ops sprd_spi_pm_ops = {
 };
 
 static const struct of_device_id sprd_spi_of_match[] = {
-	{ .compatible = "sprd,ums9620-spi", },
 	{ .compatible = "sprd,sc9860-spi", },
 	{ /* sentinel */ }
 };
@@ -1352,7 +1315,7 @@ MODULE_DEVICE_TABLE(of, sprd_spi_of_match);
 
 static struct platform_driver sprd_spi_driver = {
 	.driver = {
-		.name = "sprd-spi-ums9620",
+		.name = "sprd-spi",
 		.of_match_table = sprd_spi_of_match,
 		.pm = &sprd_spi_pm_ops,
 	},
