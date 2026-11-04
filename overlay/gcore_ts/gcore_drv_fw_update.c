@@ -3089,6 +3089,7 @@ static int fwu_event_handler(void *p)
 
 	return 0;
 }
+#endif /* CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD */
 
 int gcore_fw_update_fn_init(struct gcore_dev *gdev)
 {
