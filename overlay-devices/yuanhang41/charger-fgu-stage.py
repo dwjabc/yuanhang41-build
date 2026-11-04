@@ -96,15 +96,12 @@ def apply(kernel):
         raise ValueError('fgu desc anchor changed')
     s = s.replace(old, new, 1)
 
-    old = '\t\t\tval->intval = data->boot_cap;'
-    if s.count(old) != 1:
-        raise ValueError('fgu boot_cap anchor changed')
-    s = s.replace(old, '\t\t\tval->intval = data->boot_cap / 10;', 1)
-
+    # Keep the vendor per-mille capacity scale: charger-manager expects it
+    # and converts to percent for its "battery" psy (uisoc = cap / 10).
     old = '\t\tval->intval = sprd_fgu_capacity_remap(data, data->bat_soc);'
     if s.count(old) != 1:
         raise ValueError('fgu capacity anchor changed')
-    new = ('\t\tval->intval = sprd_fgu_capacity_remap(data, data->bat_soc) / 10;\n'
+    new = ('\t\tval->intval = sprd_fgu_capacity_remap(data, data->bat_soc);\n'
            '\t\tbreak;\n'
            '\n'
            '\tcase POWER_SUPPLY_PROP_STATUS:\n'
@@ -119,7 +116,7 @@ def apply(kernel):
     s = s.replace(old, 'sprd_fgu_props[] = {\n\tPOWER_SUPPLY_PROP_STATUS,\n\tPOWER_SUPPLY_PROP_HEALTH,', 1)
 
     fgu.write_text(s, encoding='utf-8')
-    print('charger-fgu staged: 0x6b gate + probe defer + fgu type/status/percent')
+    print('charger-fgu staged: 0x6b gate + fgu type/status; capacity stays per-mille for CM')
 
 
 if __name__ == '__main__':
