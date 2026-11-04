@@ -1043,9 +1043,12 @@ static s32 gcore_i2c_probe(struct i2c_client *client, const struct i2c_device_id
 	GTP_DEBUG("gcore_i2c_client->addr:0x%x", gcore_i2c_client->addr);
 	/* GC7371 use rst pin and need init before use */
 #ifndef CONFIG_ENABLE_CHIP_TYPE_GC7371
+	/* The GC7202 idm register read returns 0000 on this hardware even in
+	 * the working state (verified identical on the stock system), so a
+	 * chip-id miss is not fatal: log and continue - the touch data path
+	 * uses the normal register commands, not the idm window. */
 	if (gcore_probe_device()) {
-		GTP_ERROR("gcore probe device fail, deferring");
-		return -EPROBE_DEFER;
+		GTP_ERROR("gcore probe device fail - continuing (idm read is gated on this hw)");
 	}
 #endif
 
@@ -1311,9 +1314,12 @@ static s32 gcore_spi_probe(struct spi_device *slave)
 
 	/* GC7371 use rst pin and need init before use */
 #ifndef CONFIG_ENABLE_CHIP_TYPE_GC7371
+	/* The GC7202 idm register read returns 0000 on this hardware even in
+	 * the working state (verified identical on the stock system), so a
+	 * chip-id miss is not fatal: log and continue - the touch data path
+	 * uses the normal register commands, not the idm window. */
 	if (gcore_probe_device()) {
-		GTP_ERROR("gcore probe device fail, deferring");
-		return -EPROBE_DEFER;
+		GTP_ERROR("gcore probe device fail - continuing (idm read is gated on this hw)");
 	}
 #endif
 
