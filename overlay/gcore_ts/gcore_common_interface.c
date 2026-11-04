@@ -65,10 +65,17 @@ static int gcore_tp_fw_upgrade(struct ztp_device *cdev, char *fw_name, int fwnam
 
 	gdev->tp_fw_update = true;
 #if defined(CONFIG_ENABLE_CHIP_TYPE_GC7202)
+#ifdef CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD
 	if (gcore_flashdownload_fspi_proc((u8 *)cdev->tp_firmware->data)) {
 		GTP_ERROR("flashdownload fspi proc fail");
 		goto fw_upgrade_fail;
 	}
+#else
+	if (gcore_auto_update_hostdownload_proc((void *)cdev->tp_firmware->data)) {
+		GTP_ERROR("hostdownload proc fail");
+		goto fw_upgrade_fail;
+	}
+#endif
 #endif
 	gdev->tp_fw_update = false;
 	return 0;
