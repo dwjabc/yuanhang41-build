@@ -750,54 +750,63 @@ int gcore_probe_device(void)
 	int retries = 0;
 	int ret = 0;
 
-	/* Android reads the chip id directly at probe - the GC7202 boots its
-	 * firmware from flash at power-on and answers GC4a03 with no host
-	 * reset. The earlier reset pulse here restarted the firmware and the
-	 * id then read 0000, so do NOT touch the reset line (it is shared
-	 * with the LCD reset the panel driver owns on the vendor side). */
-	/* The touch reset line is the TDDI panel-shared reset: on this board
-	 * nothing else drives it, and left floating the chip sits in reset
-	 * with every SPI read returning 0000 (Android holds it high from its
-	 * panel/tpd stack). Request it as OUTPUT HIGH and keep it deasserted
-	 * - no pulse, the firmware is already running from flash. */
-	{
-		struct gpio_desc *rst = gpiod_get_optional(&gcore_spi_slave->dev,
-						"rst", GPIOD_OUT_HIGH);
-		if (IS_ERR(rst)) {
-			GTP_ERROR("rst gpio get failed: %ld", PTR_ERR(rst));
-		} else if (rst) {
-			GTP_DEBUG("rst held deasserted before id read");
-		} else {
-			GTP_DEBUG("no rst gpio; continuing");
-		}
-	}
-
-	/* The TDDI panel rails (avdd/avee/iovdd, DT panel node) also feed the
-	 * touch section; iovdd in particular gates its IO buffers. On this
-	 * board the vendor panel driver raises them before the touch probe;
-	 * on OpenWrt nothing does - drive them high from here. */
+	/* The GC7202 is a TDDI: touch shares the panel's power rails and the
+	 * reset line. On Android the vendor panel driver probe raises
+	 * iovdd/avdd/avee and runs sprd,reset-on-sequence BEFORE the touch
+	 * probe - the touch then answers its chip id immediately. On OpenWrt
+	 * nothing had driven any of it, so every SPI id read returned 0000.
+	 * Replicate the exact unicorn dtsi sequence here.
+	 *
+	 * rails: iovdd first, then avdd/avee; reset:
+	 *   <1 10> <0 10> <1 35> <0 10> <1 10> <0 10> <1 10> <0 10> <1 30>
+	 */
 	{
 		struct device_node *panel_np =
 			of_find_node_by_path("/soc/dpuvsp/dsi@31300000/panel");
 		static const char *const rails[] = { "iovdd", "avdd", "avee" };
+		static const int rail_step_us[] = { 10000, 5000, 5000 };
+		struct gpio_desc *rail_desc[3] = { NULL, NULL, NULL };
+		struct gpio_desc *rst;
 		int i;
 
 		if (!panel_np) {
-			GTP_DEBUG("panel node missing; rails untouched");
+			GTP_ERROR("panel node missing; touch power sequence skipped");
 		} else {
-			for (i = 0; i < ARRAY_SIZE(rails); i++) {
-				struct gpio_desc *rail = gpiod_get_from_of_node(
+			for (i = 0; i < 3; i++) {
+				rail_desc[i] = gpiod_get_from_of_node(
 					panel_np, rails[i], 0, GPIOD_OUT_HIGH,
 					"gcore-rail");
-				if (IS_ERR(rail)) {
+				if (IS_ERR(rail_desc[i])) {
 					GTP_DEBUG("%s rail get failed: %ld",
-						  rails[i], PTR_ERR(rail));
-					continue;
+						  rails[i], PTR_ERR(rail_desc[i]));
+					rail_desc[i] = NULL;
 				}
-				GTP_DEBUG("%s rail driven high", rails[i]);
+				usleep_range(rail_step_us[i],
+					    rail_step_us[i] + 1000);
 			}
 			of_node_put(panel_np);
-			msleep(20);
+
+			rst = gpiod_get_optional(&gcore_spi_slave->dev,
+					"rst", GPIOD_OUT_HIGH);
+			if (IS_ERR(rst))
+				rst = NULL;
+			{
+				static const int seq[][2] = {
+					{ 1, 10 }, { 0, 10 }, { 1, 35 },
+					{ 0, 10 }, { 1, 10 }, { 0, 10 },
+					{ 1, 10 }, { 0, 10 }, { 1, 30 },
+				};
+				int st;
+
+				for (st = 0; st < 9; st++) {
+					if (rst)
+						gpiod_set_value_cansleep(
+							rst, seq[st][0]);
+					msleep(seq[st][1]);
+				}
+			}
+			if (rst)
+				gpiod_put(rst);
 		}
 	}
 
