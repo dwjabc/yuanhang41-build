@@ -2428,6 +2428,8 @@ int gcore_flashdownload_fspi_proc(void *fw_buf)
 	return 0;
 }
 
+#endif /* CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD */
+
 #ifdef CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD
 int gcore_earse_flash_block01_proc(void)
 {
@@ -2474,7 +2476,7 @@ int gcore_earse_flash_block01_proc(void)
 	
 	return 0;
 }
-#endif /* FLASHDOWNLOAD */
+#endif /* CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD */
 
 int gcore_burn_fw_idm2(u8 *fw_data)
 {
@@ -3089,7 +3091,6 @@ static int fwu_event_handler(void *p)
 
 	return 0;
 }
-#endif /* CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD */
 
 int gcore_fw_update_fn_init(struct gcore_dev *gdev)
 {
