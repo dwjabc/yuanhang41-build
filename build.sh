@@ -37,6 +37,8 @@ KC
     fi
     echo "== staging gcore GC7202 touchscreen driver (ZTE 7541N panel) =="
     python3 "$TOP/overlay-devices/yuanhang41/gcore-touch.py" "$KERNEL"
+    echo "== staging ZTE vendor spi controller for the touch bus =="
+    python3 "$TOP/overlay-devices/yuanhang41/spi-zte-stage.py" "$KERNEL"
     echo "== building kernel (jobs=$JOBS) =="
     python3 devices/yuanhang41/build-kernel.py \
         --kernel "$KERNEL" \

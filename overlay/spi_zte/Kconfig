@@ -1,0 +1,9 @@
+config SPI_SPRD_UMS9620
+	tristate "Spreadtrum UMS9620 SPI controller (ZTE vendor 5.4 port)"
+	depends on SPI_MASTER && (ARCH_SPRD || COMPILE_TEST)
+	help
+	  ZTE vendor sprd SPI controller driver for UMS9620 (qogirn6pro),
+	  carried from the Android 5.4 kernel. Matches "sprd,ums9620-spi"
+	  (the touch bus spi@70000 on the ZTE 7541N) ahead of the in-tree
+	  sc9860 fallback, replicating the controller behavior the touch
+	  IC is verified against.
