@@ -92,10 +92,9 @@ struct fw_update_info update_info = {
 #define GC7XXX_MAX_TRANSFER_DATA      (GC7XXX_REQUEST_SIZE - 8)
 
 #define FLASH_OP_TRANSFER_SIZE        1024
+#endif
 
 #define FW_VERSION_ADDR               0xFFF4
-
-#endif
 
 #ifdef CONFIG_TOUCH_DRIVER_RUN_ON_RK_PLATFORM
 extern int dsi_send_packet(unsigned int id, unsigned char *packet, u32 n);
@@ -2429,8 +2428,7 @@ int gcore_flashdownload_fspi_proc(void *fw_buf)
 	return 0;
 }
 
-#endif /* CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD */
-
+#ifdef CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD
 int gcore_earse_flash_block01_proc(void)
 {
 	int ret = 0;
@@ -2476,6 +2474,7 @@ int gcore_earse_flash_block01_proc(void)
 	
 	return 0;
 }
+#endif /* FLASHDOWNLOAD */
 
 int gcore_burn_fw_idm2(u8 *fw_data)
 {
@@ -3100,7 +3099,9 @@ int gcore_fw_update_fn_init(struct gcore_dev *gdev)
 	if (gcore_create_attribute(&gdev->bus_device->dev)) {
 		GTP_ERROR("update fn create attribute fail");
 	}
+#ifdef CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD
 	gcore_earse_flash_block01_proc();
+#endif
 	queue_delayed_work(gdev->fwu_workqueue, &gdev->fwu_work, msecs_to_jiffies(STARTUP_UPDATE_DELAY_MS));
 
 	return 0;
