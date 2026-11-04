@@ -39,8 +39,8 @@
  * Hostdownload for 0 flash,flashdownload for 1 flash
  * FW download function need another fw_update module, if needed, contact to our colleague
  */
-/*#define CONFIG_GCORE_AUTO_UPDATE_FW_HOSTDOWNLOAD */
-#define CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD
+#define CONFIG_GCORE_AUTO_UPDATE_FW_HOSTDOWNLOAD
+/*#define CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD */
 /*
  * Note.
  * The below compile option is used to enable function transfer fw raw data to App or Tool
