@@ -44,6 +44,12 @@ int gcore_get_fw(void)
 	}
 	strscpy(gcore_vendor_name, "Unknown", sizeof(gcore_vendor_name));
 	ret = -EIO;
+	/* Our boot chain may not carry lcd_name on the cmdline; fall back to
+	 * this unit's vendor so gcore_firmware_skyworth.bin still resolves. */
+	if (ret && !strlen(gcore_vendor_name)) {
+		strscpy(gcore_vendor_name, "skyworth", sizeof(gcore_vendor_name));
+		ret = 0;
+	}
 out:
 	snprintf(gcore_firmware_name, sizeof(gcore_firmware_name),
 			"gcore_firmware_%s.bin", gcore_vendor_name);

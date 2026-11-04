@@ -2592,11 +2592,14 @@ void gcore_request_firmware_update_work(struct work_struct *work)
 		return;
 	}
 
+	GTP_ERROR("request firmware '%s' from dev %s", FW_BIN_NAME,
+		  gdev_fwu && gdev_fwu->bus_device ? dev_name(&gdev_fwu->bus_device->dev) : "NULL");
 	if (request_firmware(&fw, FW_BIN_NAME, &gdev_fwu->bus_device->dev)) {
-		GTP_ERROR("request firmware fail");
+		GTP_ERROR("request firmware fail: '%s' size want %d", FW_BIN_NAME, (int)FW_SIZE);
 		tpd_zlog_record_notify(TP_REQUEST_FIRMWARE_ERROR_NO);
 		goto fail1;
 	}
+	GTP_ERROR("request firmware ok '%s' size %d", FW_BIN_NAME, (int)fw->size);
 
 	memcpy(fw_buf, fw->data, fw->size);
 
