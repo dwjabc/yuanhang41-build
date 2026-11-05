@@ -838,7 +838,24 @@ int gcore_probe_device(void)
 void gcore_wdt_recovery_works(struct work_struct *work)
 {
 	struct gcore_dev *gdev = fn_data.gdev;
+	u8 poll_data[8] = { 0 };
+	u8 poll_ver[4] = { 0 };
+	int irq_lvl = -1;
 
+	/* Live FW-state probe: read the report stream head and the FW
+	 * version registers through the normal bus protocol every WDT
+	 * cycle, bypassing the interrupt path entirely. */
+	if (!gcore_bus_read(poll_data, sizeof(poll_data))) {
+		gcore_read_fw_version(poll_ver, sizeof(poll_ver));
+		if (gdev->irq_gpio >= 0)
+			irq_lvl = gpio_get_value(gdev->irq_gpio);
+		GTP_ERROR("POLL: data %02x %02x %02x %02x %02x %02x %02x %02x ver %02x %02x %02x %02x irq%d",
+			  poll_data[0], poll_data[1], poll_data[2], poll_data[3],
+			  poll_data[4], poll_data[5], poll_data[6], poll_data[7],
+			  poll_ver[0], poll_ver[1], poll_ver[2], poll_ver[3], irq_lvl);
+	} else {
+		GTP_ERROR("POLL: bus read fail");
+	}
 
 	GTP_ERROR("WDT timeout recovery ts:%d", gdev->ts_stat);
 	if (!gdev->ts_stat && (!gdev->tp_fw_update) && (!gdev->tp_self_test)) {
