@@ -16,7 +16,7 @@ on:
         default: true
 
 permissions:
-  contents: read
+  contents: write
   actions: read
 
 env:
@@ -125,14 +125,17 @@ jobs:
           path: ~/.cache/ccache
           key: ccache-kernel-${{ env.KERNEL_REF }}-${{ github.run_id }}
 
-      - name: Snapshot kernel artifacts (any result)
+      - name: Snapshot kernel artifacts (release, any result)
         if: always() && inputs.skip_kernel != true
-        uses: actions/upload-artifact@v4
-        with:
-          name: kernel-out
-          path: yh41/kernel-out
-          compression-level: 0
-          if-no-files-found: error
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_TAG: run-${{ github.run_id }}
+        run: |
+          set -e
+          cd yh41/kernel-out
+          tar -cf /tmp/kernel-out.tar .
+          gh release create "$RUN_TAG" --title "build $RUN_TAG" --notes "kernel-out for run $RUN_TAG" --target "$GITHUB_SHA" 2>/dev/null || true
+          gh release upload "$RUN_TAG" /tmp/kernel-out.tar --clobber
 
       - name: Reuse kernel artifacts from a previous run
         if: inputs.skip_kernel == true
@@ -155,15 +158,14 @@ jobs:
         run: |
           bash build.sh repack
 
-      - name: Upload the installer package
-        uses: actions/upload-artifact@v4
-        with:
-          name: yuanhang41-openwrt-package
-          path: |
-            out/*.zip
-            out/*.sha256
-          compression-level: 0
-          if-no-files-found: error
+      - name: Upload the installer package (release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_TAG: run-${{ github.run_id }}
+        run: |
+          set -e
+          gh release create "$RUN_TAG" --title "build $RUN_TAG" --notes "installer for run $RUN_TAG" --target "$GITHUB_SHA" 2>/dev/null || true
+          gh release upload "$RUN_TAG" out/*.zip out/*.sha256 --clobber
 
       - name: Upload build diagnostics
         if: failure()
