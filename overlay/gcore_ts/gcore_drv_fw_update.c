@@ -3107,8 +3107,11 @@ int gcore_fw_update_fn_init(struct gcore_dev *gdev)
 #ifdef CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD
 	gcore_earse_flash_block01_proc();
 #endif
-	queue_delayed_work(gdev->fwu_workqueue, &gdev->fwu_work, msecs_to_jiffies(STARTUP_UPDATE_DELAY_MS));
-
+	/* No startup hostdownload: this unit's touch IC runs its own flash
+	 * firmware and a PRAM download dead-ends the touch engine (and
+	 * wedges the trigger against later downloads). Manual recovery
+	 * stays available via the fw_update sysfs attribute if a firmware
+	 * bin is ever staged. */
 	return 0;
 }
 
