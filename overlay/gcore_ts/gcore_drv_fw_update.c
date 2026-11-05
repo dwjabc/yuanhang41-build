@@ -738,9 +738,11 @@ int gcore_read_fw_version_retry(u8 *version, int length)
 		msleep(10);
 		GTP_ERROR("poweron fw ver discorrect retry:%d", retry);
 
-		gcore_sys_soft_reset();
-
-		msleep(10);
+		/* NO soft reset here: on this 0-flash unit the running
+		 * firmware lives in PRAM and a reset drops it back to the
+		 * bootloader, killing touch until the next download. The
+		 * version-based vendor check never matches anyway (the fw
+		 * is 6.17.x while the table expects 3.x). */
 
 		retry--;
 	}

@@ -571,6 +571,15 @@ s32 gcore_touch_event_handler(struct gcore_dev *gdev)
 	if (checksum != coor_data[DEMO_DATA_SIZE - 1]) {
 		tpd_zlog_record_notify(TP_CRC_ERROR_NO);
 		GTP_ERROR("checksum error! read:%x cal:%x", coor_data[DEMO_DATA_SIZE - 1], checksum);
+		GTP_ERROR("frame 0-15: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+			  coor_data[0], coor_data[1], coor_data[2], coor_data[3],
+			  coor_data[4], coor_data[5], coor_data[6], coor_data[7],
+			  coor_data[8], coor_data[9], coor_data[10], coor_data[11],
+			  coor_data[12], coor_data[13], coor_data[14], coor_data[15]);
+		GTP_ERROR("frame 56-64: %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+			  coor_data[56], coor_data[57], coor_data[58], coor_data[59],
+			  coor_data[60], coor_data[61], coor_data[62], coor_data[63],
+			  coor_data[64]);
 		return -EPERM;
 	}
 
