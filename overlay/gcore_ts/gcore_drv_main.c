@@ -1245,7 +1245,13 @@ s32 gcore_spi_read(u8 *buffer, s32 len)
 #endif
 
 	spi_message_init(&msg);
-	gcore_spi_setup_xfer(&transfer, len);
+	/* The 6.18 spi-sprd driver DMAs only whole fragment steps (8 bytes
+	 * at 8-bit words) and leaves the remainder to a tail read that
+	 * drops bytes on this silicon - the vendor 5.4 driver rounded the
+	 * DMA length UP instead. Align the transfer so the round-down never
+	 * truncates the report stream; the extra clocks only read past the
+	 * end of the chip's report buffer and are discarded here. */
+	ret = gcore_spi_setup_xfer(&transfer, ALIGN(len, 8));
 	if (ret) {
 		GTP_ERROR("gcore spi setup xfer fail!");
 		return -EPERM;
