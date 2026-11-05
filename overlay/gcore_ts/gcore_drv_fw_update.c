@@ -1428,18 +1428,25 @@ int gcore_update_hostdownload_trigger(u8 *fw_buf)
 	/* The b3 handshake only confirms the PRAM write. On this chip the
 	 * bootloader does not start the downloaded app by itself - without
 	 * an explicit run command it keeps streaming its update-request
-	 * frame (40 b1 ... 73 71 ...) and touch stays dead. Send the same
-	 * remap+run command the IDM download path issues
-	 * (gcore_run_pram_fw) over the bus, without the idm dance. */
+	 * frame and touch stays dead. Mirror gcore_run_pram_fw exactly:
+	 * the remap+run command is issued while the idm window is
+	 * unlocked, then the window is closed. */
+	if (gcore_enter_idm_mode()) {
+		GTP_ERROR("pram fw run: enter idm fail.");
+		return -EPERM;
+	}
+
 	{
 		u8 run_cmd[] = { 0x95, 0x27, 0x05, 0xFA, 0x40, 0x00, 0x00, 0x50, 0x81 };
 
 		if (gcore_bus_write(run_cmd, sizeof(run_cmd))) {
 			GTP_ERROR("pram fw run command fail.");
 		}
-		msleep(50);
-		GTP_INFO("pram fw run command sent.");
 	}
+
+	gcore_exit_idm_mode();
+	msleep(50);
+	GTP_INFO("pram fw run command sent (idm).");
 
 	return 0;
 }
