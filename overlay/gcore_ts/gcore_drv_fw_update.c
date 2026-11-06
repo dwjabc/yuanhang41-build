@@ -2170,6 +2170,29 @@ int gcore_auto_update_hostdownload_proc(void *fw_buf)
 		}
 	}
 
+	/* GC7202H CB config handshake: after the PRAM app boots it asks for
+	 * its 1290-byte configuration block by streaming the CB check frame
+	 * (ff ff cb 00 00 cb ff ff). The shipping driver answers with the CB
+	 * buffer via a locked bus write; without this exchange the FW keeps
+	 * reporting heartbeat/raw frames and never enables touch reporting.
+	 * First boot sends an all-zero block (kzalloc state, same as the
+	 * shipping driver's first boot); the FW acknowledges with its own
+	 * CB status. */
+	{
+		static u8 cb_block[1290];
+		int ret;
+
+		mutex_lock(&gdev_fwu->transfer_lock);
+		ret = gcore_bus_write(cb_block, sizeof(cb_block));
+		mutex_unlock(&gdev_fwu->transfer_lock);
+		if (ret) {
+			GTP_ERROR("CB value download fail: %d", ret);
+		} else {
+			GTP_INFO("CB value download done (1290 bytes)");
+		}
+		msleep(50);
+	}
+
 	return 0;
 }
 
