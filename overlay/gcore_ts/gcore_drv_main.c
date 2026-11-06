@@ -847,26 +847,38 @@ int gcore_probe_device(void)
 void gcore_wdt_recovery_works(struct work_struct *work)
 {
 	struct gcore_dev *gdev = fn_data.gdev;
-	u8 poll_data[8] = { 0 };
-	u8 poll_ver[4] = { 0 };
+	static u8 last[DEMO_DATA_SIZE];
+	static int have_last;
+	u8 frame[DEMO_DATA_SIZE];
 	int irq_lvl = -1;
+	int i, sum = 0, changed = 0;
 
-	/* Live FW-state probe: read the report stream head and the FW
-	 * version registers through the normal bus protocol every WDT
-	 * cycle, bypassing the interrupt path entirely. */
-	if (!gcore_bus_read(poll_data, sizeof(poll_data))) {
-		gcore_read_fw_version(poll_ver, sizeof(poll_ver));
+	/* Self-perpetuating sensor probe: read the full report window every
+	 * cycle, independent of the interrupt path, and log whenever the
+	 * content changes (a finger over the sensor moves these values a
+	 * lot). */
+	if (!gcore_bus_read(frame, sizeof(frame))) {
 		if (gdev->irq_gpio >= 0)
 			irq_lvl = gpio_get_value(gdev->irq_gpio);
-		GTP_ERROR("POLL: data %02x %02x %02x %02x %02x %02x %02x %02x ver %02x %02x %02x %02x irq%d",
-			  poll_data[0], poll_data[1], poll_data[2], poll_data[3],
-			  poll_data[4], poll_data[5], poll_data[6], poll_data[7],
-			  poll_ver[0], poll_ver[1], poll_ver[2], poll_ver[3], irq_lvl);
-	} else {
-		GTP_ERROR("POLL: bus read fail");
+		for (i = 0; i < DEMO_DATA_SIZE - 1; i++)
+			sum += frame[i];
+		if (have_last)
+			for (i = 0; i < DEMO_DATA_SIZE; i++)
+				if (frame[i] != last[i]) { changed = 1; break; }
+		if (!have_last || changed)
+			GTP_ERROR("POLL irq%d sum%02x: %02x %02x %02x %02x %02x %02x %02x %02x | %02x %02x %02x %02x %02x %02x %02x %02x",
+				  irq_lvl, sum & 0xff,
+				  frame[0], frame[1], frame[2], frame[3],
+				  frame[4], frame[5], frame[6], frame[7],
+				  frame[57], frame[58], frame[59], frame[60],
+				  frame[61], frame[62], frame[63], frame[64]);
+		memcpy(last, frame, sizeof(frame));
+		have_last = 1;
 	}
 
-	GTP_ERROR("WDT timeout recovery ts:%d", gdev->ts_stat);
+	if (gdev->fwu_workqueue)
+		queue_delayed_work(gdev->fwu_workqueue, work,
+				   msecs_to_jiffies(GCORE_WDT_TIMEOUT_PERIOD));
 	if (!gdev->ts_stat && (!gdev->tp_fw_update) && (!gdev->tp_self_test)) {
 		gdev->tp_esd_check_error = true;
 		tpd_zlog_record_notify(TP_ESD_CHECK_ERROR_NO);
@@ -920,9 +932,11 @@ s32 gcore_init(struct gcore_dev *gdev)
 
 	gdev->fwu_workqueue = create_singlethread_workqueue("fwu_workqueue");
 	INIT_DELAYED_WORK(&gdev->fwu_work, gcore_request_firmware_update_work);
+	INIT_DELAYED_WORK(&gdev->wdt_work, gcore_wdt_recovery_works);
+	queue_delayed_work(gdev->fwu_workqueue, &gdev->wdt_work,
+			   msecs_to_jiffies(3000));
 
 #ifdef GCORE_WDT_RECOVERY_ENABLE
-	INIT_DELAYED_WORK(&gdev->wdt_work, gcore_wdt_recovery_works);
 #endif
 
 	return 0;
