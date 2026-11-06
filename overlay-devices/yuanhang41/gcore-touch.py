@@ -12,7 +12,7 @@ SRCS = ('gcore_drv_main.c', 'gcore_drv_interface.c',
         'ztp_core.c', 'lcd_state_notify.c', 'ztp_report_algo.c',
         'ztp_state_change.c', 'ztp_ufp.c')
 HDRS = ('gcore_drv_common.h', 'gcore_drv_firmware.h', 'gcore_ioctl.h',
-        'gcore_firmware_config.h', 'ztp_common.h', 'ztp_ufp.h', 'ztp_core.h',
+        'gcore_firmware_config_v3.h', 'ztp_common.h', 'ztp_ufp.h', 'ztp_core.h',
         'zte_tpd.h')
 
 MAKEFILE = '''obj-$(CONFIG_TOUCHSCREEN_GCORE_TS) += gcore_ts.o
