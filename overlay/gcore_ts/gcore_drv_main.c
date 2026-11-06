@@ -144,9 +144,7 @@ void gcore_irq_disable(struct gcore_dev *gdev)
 #ifndef CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM
 int gcore_get_gpio_info(struct gcore_dev *gdev, struct device_node *node)
 {
-	int flag = 0;
-
-	gdev->irq_gpio = of_get_named_gpio_flags(node, "gcore,irq-gpio", 0, (enum of_gpio_flags *)&flag);
+	gdev->irq_gpio = of_get_named_gpio(node, "gcore,irq-gpio", 0);
 	if (!gpio_is_valid(gdev->irq_gpio)) {
 		GTP_ERROR("invalid gcore,irq-gpio:%d", gdev->irq_gpio);
 		return -EPERM;
@@ -157,7 +155,7 @@ int gcore_get_gpio_info(struct gcore_dev *gdev, struct device_node *node)
 		return -EPERM;
 	}
 
-	gdev->rst_gpio = of_get_named_gpio_flags(node, "gcore,rst-gpio", 0, (enum of_gpio_flags *)&flag);
+	gdev->rst_gpio = of_get_named_gpio(node, "gcore,rst-gpio", 0);
 	if (!gpio_is_valid(gdev->rst_gpio)) {
 		GTP_ERROR("invalid gcore,reset-gpio:%d", gdev->rst_gpio);
 		return -EPERM;
@@ -1529,7 +1527,7 @@ void gcore_spi_config(void)
 	gcore_spi_slave->mode = SPI_MODE_0;
 	gcore_spi_slave->bits_per_word = 8;
 	gcore_spi_slave->max_speed_hz = 6000000;
-	gcore_spi_slave->chip_select = 0;
+	/* chip_select became a multi-CS array in 6.12; DT reg=0 selects it. */
 	spi_setup(gcore_spi_slave);
 
 }
@@ -1570,14 +1568,14 @@ static s32 gcore_spi_probe(struct spi_device *slave)
 	return 0;
 }
 
-static int gcore_spi_remove(struct spi_device *slave)
+static void gcore_spi_remove(struct spi_device *slave)
 {
 	struct gcore_dev *gdev = spi_get_drvdata(slave);
 
 	GTP_INFO("%s enter\n", __func__);
 	gcore_deinit(gdev);
 	GTP_INFO("%s exit\n", __func__);
-	return 0;
+
 }
 
 #if 0
