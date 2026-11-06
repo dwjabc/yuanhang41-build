@@ -740,6 +740,9 @@ s32 gcore_touch_event_handler(struct gcore_dev *gdev)
 
 	checksum = Cal8bitsChecksum(coor_data, DEMO_DATA_SIZE - 1);
 	if (checksum != coor_data[DEMO_DATA_SIZE - 1]) {
+		/* DIAGNOSTIC: report anyway — if the coordinates come out sane,
+		 * the frame is valid and only the checksum byte transport is
+		 * off; if they are garbage the FW frame format itself differs. */
 #ifdef CONFIG_VENDOR_ZTE_LOG_EXCEPTION
 		tpd_zlog_record_notify(TP_CRC_ERROR_NO);
 #endif
@@ -759,7 +762,7 @@ s32 gcore_touch_event_handler(struct gcore_dev *gdev)
 		GTP_ERROR("f%02d: %02x %02x %02x %02x %02x %02x ", coor_data[54], coor_data[55], coor_data[56], coor_data[57], coor_data[58], coor_data[59]);
 		GTP_ERROR("tail: %02x %02x %02x %02x %02x ", coor_data[60], coor_data[61], coor_data[62], coor_data[63], coor_data[64]);
 	}
-		return -EPERM;
+	/* DIAGNOSTIC: fall through to the report path instead of dropping */
 	}
 
 #ifdef CONFIG_ENABLE_GESTURE_WAKEUP
