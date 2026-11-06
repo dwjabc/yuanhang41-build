@@ -37,7 +37,6 @@ static const struct proc_ops gcore_app_pops = {
 	.proc_open = gcore_app_open,
 	.proc_read = gcore_app_read,
 	.proc_ioctl = gcore_app_ioctl,
-	.compat_ioctl = gcore_app_ioctl,
 };
 
 struct proc_dir_entry *gcore_proc_entry = NULL;
