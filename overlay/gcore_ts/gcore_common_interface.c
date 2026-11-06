@@ -6,6 +6,7 @@
 *
 ************************************************************************/
 #include "gcore_drv_common.h"
+#include <linux/vmalloc.h>
 #include <linux/gpio.h>
 #define MAX_FILE_NAME_LEN       64
 #define MAX_FILE_PATH_LEN  64
@@ -40,13 +41,13 @@ int gcore_get_fw(void)
 	for (i = 0; i < ARRAY_SIZE(gcore_vendor_l); i++) {
 		if (strnstr(lcd_name, gcore_vendor_l[i].vendor_name, strlen(lcd_name))) {
 			gcore_vendor_id = gcore_vendor_l[i].vendor_id;
-			strlcpy(gcore_vendor_name, gcore_vendor_l[i].vendor_name,
+			strscpy(gcore_vendor_name, gcore_vendor_l[i].vendor_name,
 				sizeof(gcore_vendor_name));
 			ret = 0;
 			goto out;
 		}
 	}
-	strlcpy(gcore_vendor_name, "Unknown", sizeof(gcore_vendor_name));
+	strscpy(gcore_vendor_name, "Unknown", sizeof(gcore_vendor_name));
 	ret = -EIO;
 out:
 	snprintf(gcore_firmware_name, sizeof(gcore_firmware_name),
@@ -114,8 +115,8 @@ static int tpd_init_tpinfo(struct ztp_device *cdev)
 	u8 read_data[4] = { 0 };
 
 	gcore_read_fw_version_retry(read_data, sizeof(read_data));
-	strlcpy(cdev->ic_tpinfo.tp_name, "gcore_ts", sizeof(cdev->ic_tpinfo.tp_name));
-	strlcpy(cdev->ic_tpinfo.vendor_name, gcore_vendor_name, sizeof(cdev->ic_tpinfo.vendor_name));
+	strscpy(cdev->ic_tpinfo.tp_name, "gcore_ts", sizeof(cdev->ic_tpinfo.tp_name));
+	strscpy(cdev->ic_tpinfo.vendor_name, gcore_vendor_name, sizeof(cdev->ic_tpinfo.vendor_name));
 	cdev->ic_tpinfo.chip_model_id = TS_CHIP_GCORE;
 	cdev->ic_tpinfo.firmware_ver = read_data[1] << 24 | read_data[0] << 16 | read_data[3] << 8 | read_data[2];
 	cdev->ic_tpinfo.module_id = gcore_vendor_id;
