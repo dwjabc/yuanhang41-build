@@ -438,6 +438,10 @@ static void tpd_touch_report(struct input_dev *input, u16 x, u16 y, u16 id, u8 t
 	input_report_key(input, BTN_TOUCH, 1);
 	input_report_abs(input, ABS_MT_POSITION_X, x);
 	input_report_abs(input, ABS_MT_POSITION_Y, y);
+	/* legacy single-touch stream: libudev-zero's input classification only
+	 * grants ID_INPUT_TOUCHSCREEN to devices whose ABS bitmap has ABS_X/Y */
+	input_report_abs(input, ABS_X, x);
+	input_report_abs(input, ABS_Y, y);
 	if (pressure)
 		input_report_abs(input, ABS_MT_PRESSURE, pressure);
 	if (touch_major)
@@ -452,6 +456,8 @@ static void tpd_touch_report_nolock(struct input_dev *input, u16 x, u16 y, u16 i
 	input_report_key(input, BTN_TOUCH, 1);
 	input_report_abs(input, ABS_MT_POSITION_X, x);
 	input_report_abs(input, ABS_MT_POSITION_Y, y);
+	input_report_abs(input, ABS_X, x);
+	input_report_abs(input, ABS_Y, y);
 	if (pressure)
 		input_report_abs(input, ABS_MT_PRESSURE, pressure);
 	if (touch_major)

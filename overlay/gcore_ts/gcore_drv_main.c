@@ -336,9 +336,15 @@ int gcore_input_device_init(struct gcore_dev *gdev)
 	input_set_abs_params(gdev->input_device, ABS_MT_POSITION_X, 0, tpd_res_x, 0, 0);
 	input_set_abs_params(gdev->input_device, ABS_MT_POSITION_Y, 0, tpd_res_y, 0, 0);
 	input_set_abs_params(gdev->input_device, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
+	/* legacy ABS_X/Y: libudev-zero only tags a device ID_INPUT_TOUCHSCREEN
+	 * when its ABS bitmap carries the plain X/Y codes */
+	input_set_abs_params(gdev->input_device, ABS_X, 0, tpd_res_x, 0, 0);
+	input_set_abs_params(gdev->input_device, ABS_Y, 0, tpd_res_y, 0, 0);
 
 #ifdef CONFIG_ENABLE_GESTURE_WAKEUP
-	set_bit(GESTURE_KEY, gdev->input_device->keybit);
+	/* no GESTURE_KEY in keybit: any key inside KEY_ESC..BTN_MISC makes
+	 * libudev-zero tag the device ID_INPUT_KEY and libinput then treats
+	 * the panel as a keyboard, which silently drops all touch input */
 #endif
 
 #ifdef CONFIG_ENABLE_TYPE_B_PROCOTOL
@@ -372,13 +378,13 @@ int gcore_input_device_init(struct gcore_dev *gdev)
 	set_bit(EV_SYN, gdev->input_device->evbit);
 	set_bit(INPUT_PROP_DIRECT, gdev->input_device->propbit);
 
-#ifdef CONFIG_ENABLE_GESTURE_WAKEUP
-	set_bit(GESTURE_KEY, gdev->input_device->keybit);
-#endif
+	/* same GESTURE_KEY note as above: keep the panel a pure touchscreen */
 
 	input_set_abs_params(gdev->input_device, ABS_MT_POSITION_X, 0, tpd_res_x, 0, 0);
 	input_set_abs_params(gdev->input_device, ABS_MT_POSITION_Y, 0, tpd_res_y, 0, 0);
 	input_set_abs_params(gdev->input_device, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
+	input_set_abs_params(gdev->input_device, ABS_X, 0, tpd_res_x, 0, 0);
+	input_set_abs_params(gdev->input_device, ABS_Y, 0, tpd_res_y, 0, 0);
 
 #ifdef CONFIG_ENABLE_TYPE_B_PROCOTOL
 	if (input_mt_init_slots(gdev->input_device, GTP_MAX_TOUCH, 0)) {
@@ -419,6 +425,10 @@ void gcore_touch_down(struct input_dev *dev, s32 x, s32 y, u8 id, u8 area)
 	input_mt_report_slot_state(dev, MT_TOOL_FINGER, true);
 	input_report_abs(dev, ABS_MT_POSITION_X, x);
 	input_report_abs(dev, ABS_MT_POSITION_Y, y);
+	/* legacy single-touch stream alongside MT: see the ABS_X/Y note in
+	 * gcore_input_device_init */
+	input_report_abs(dev, ABS_X, x);
+	input_report_abs(dev, ABS_Y, y);
 	input_report_abs(dev, ABS_MT_TOUCH_MAJOR, area);
 #ifdef CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM
 	input_report_abs(dev, ABS_MT_PRESSURE, 100);
@@ -428,6 +438,8 @@ void gcore_touch_down(struct input_dev *dev, s32 x, s32 y, u8 id, u8 area)
 	input_report_key(dev, BTN_TOUCH, 1);	/* for single-touch device */
 	input_report_abs(dev, ABS_MT_POSITION_X, x);
 	input_report_abs(dev, ABS_MT_POSITION_Y, y);
+	input_report_abs(dev, ABS_X, x);
+	input_report_abs(dev, ABS_Y, y);
 	input_report_abs(dev, ABS_MT_TOUCH_MAJOR, area);
 	input_mt_sync(dev);
 #endif
