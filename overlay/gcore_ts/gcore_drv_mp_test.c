@@ -2512,7 +2512,7 @@ int gcore_start_mp_test(void)
 
 static int32_t gcore_mp_test_open(struct inode *inode, struct file *file)
 {
-	struct gcore_mp_data *mp_data = PDE_DATA(inode);
+	struct gcore_mp_data *mp_data = pde_data(inode);
 
 	if (mp_data == NULL) {
 		GTP_ERROR("Open selftest proc with mp data = NULL");
@@ -2590,6 +2590,14 @@ static int32_t gcore_mp_test_open(struct inode *inode, struct file *file)
 
 	return 0;
 }
+
+static const struct proc_ops gcore_mp_pops = {
+	
+	.open = gcore_mp_test_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = seq_release,
+};
 
 struct file_operations gcore_mp_fops = {
 	.owner = THIS_MODULE,
@@ -2685,7 +2693,15 @@ static int32_t gcore_rawdata_open(struct inode *inode, struct file *file)
 		return -EPERM;
 	}
 
-	((struct seq_file *)file->private_data)->private = gdev;
+	((struct seq_fstatic const struct proc_ops gcore_rawdata_pops = {
+	
+	.open = gcore_rawdata_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = seq_release,
+};
+
+ile *)file->private_data)->private = gdev;
 
 	return 0;
 }
