@@ -745,15 +745,20 @@ s32 gcore_touch_event_handler(struct gcore_dev *gdev)
 #endif
 		GTP_ERROR("checksum error! read:%x cal:%x", \
 			coor_data[DEMO_DATA_SIZE - 1], checksum);
-#if 1
-		for (i = 1; i <= 10; i++) {
-			GTP_DEBUG("demo %d:%x %x %x %x %x %x", i, coor_data[6*i-6], \
-				coor_data[6*i-5], coor_data[6*i-4], coor_data[6*i-3], \
-				coor_data[6*i-2], coor_data[6*i-1]);
-		}
-		GTP_DEBUG("demo:%x %x %x %x", coor_data[60], coor_data[61], \
-			coor_data[62], coor_data[63]);
-#endif
+	{
+		GTP_ERROR("touch frame dump:");
+		GTP_ERROR("f%02d: %02x %02x %02x %02x %02x %02x ", coor_data[0], coor_data[1], coor_data[2], coor_data[3], coor_data[4], coor_data[5]);
+		GTP_ERROR("f%02d: %02x %02x %02x %02x %02x %02x ", coor_data[6], coor_data[7], coor_data[8], coor_data[9], coor_data[10], coor_data[11]);
+		GTP_ERROR("f%02d: %02x %02x %02x %02x %02x %02x ", coor_data[12], coor_data[13], coor_data[14], coor_data[15], coor_data[16], coor_data[17]);
+		GTP_ERROR("f%02d: %02x %02x %02x %02x %02x %02x ", coor_data[18], coor_data[19], coor_data[20], coor_data[21], coor_data[22], coor_data[23]);
+		GTP_ERROR("f%02d: %02x %02x %02x %02x %02x %02x ", coor_data[24], coor_data[25], coor_data[26], coor_data[27], coor_data[28], coor_data[29]);
+		GTP_ERROR("f%02d: %02x %02x %02x %02x %02x %02x ", coor_data[30], coor_data[31], coor_data[32], coor_data[33], coor_data[34], coor_data[35]);
+		GTP_ERROR("f%02d: %02x %02x %02x %02x %02x %02x ", coor_data[36], coor_data[37], coor_data[38], coor_data[39], coor_data[40], coor_data[41]);
+		GTP_ERROR("f%02d: %02x %02x %02x %02x %02x %02x ", coor_data[42], coor_data[43], coor_data[44], coor_data[45], coor_data[46], coor_data[47]);
+		GTP_ERROR("f%02d: %02x %02x %02x %02x %02x %02x ", coor_data[48], coor_data[49], coor_data[50], coor_data[51], coor_data[52], coor_data[53]);
+		GTP_ERROR("f%02d: %02x %02x %02x %02x %02x %02x ", coor_data[54], coor_data[55], coor_data[56], coor_data[57], coor_data[58], coor_data[59]);
+		GTP_ERROR("tail: %02x %02x %02x %02x %02x ", coor_data[60], coor_data[61], coor_data[62], coor_data[63], coor_data[64]);
+	}
 		return -EPERM;
 	}
 
