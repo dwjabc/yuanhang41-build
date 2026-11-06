@@ -1573,11 +1573,9 @@ static void gcore_spi_remove(struct spi_device *slave)
 {
 	struct gcore_dev *gdev = spi_get_drvdata(slave);
 
-	GTP_INFO("%s enter
-", __func__);
+	GTP_INFO("%s enter\n", __func__);
 	gcore_deinit(gdev);
-	GTP_INFO("%s exit
-", __func__);
+	GTP_INFO("%s exit\n", __func__);
 }
 
 #if 0
