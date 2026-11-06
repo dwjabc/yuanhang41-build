@@ -2589,18 +2589,24 @@ static int32_t gcore_mp_test_open(struct inode *inode, struct file *file)
 struct proc_dir_entry *rawdata_proc_entry;
 #define RAWDATA_PROC_FILENAME "gcore_rawdata"
 
-struct file_operations gcore_rawdata_fops = {
-	.owner = THIS_MODULE,
-	.open = gcore_rawdata_open,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.release = seq_release,
+static const struct proc_ops gcore_rawdata_pops = {
+	.proc_open = gcore_rawdata_open,
+	.proc_read = seq_read,
+	.proc_lseek = seq_lseek,
+	.proc_release = seq_release,
+};
+
+static const struct proc_ops gcore_mp_pops = {
+	.proc_open = gcore_mp_test_open,
+	.proc_read = seq_read,
+	.proc_lseek = seq_lseek,
+	.proc_release = seq_release,
 };
 
 int gcore_rawdata_node_init(void)
 {
 	rawdata_proc_entry = proc_create_data(RAWDATA_PROC_FILENAME,
-						  S_IRUGO, NULL, &gcore_rawdata_fops, NULL);
+						  S_IRUGO, NULL, &gcore_rawdata_pops, NULL);
 	if (rawdata_proc_entry == NULL) {
 		GTP_ERROR("create rawdata proc entry failed");
 		return -EPERM;
@@ -2628,7 +2634,7 @@ int gcore_mp_test_fn_init(struct gcore_dev *gdev)
 	g_mp_data = mp_data;
 
 	mp_data->mp_proc_entry = proc_create_data(MP_TEST_PROC_FILENAME,
-						  S_IRUGO, NULL, &gcore_mp_fops, mp_data);
+						  S_IRUGO, NULL, &gcore_mp_pops, mp_data);
 	if (mp_data->mp_proc_entry == NULL) {
 		GTP_ERROR("create mp test proc entry selftest failed");
 		goto fail1;
