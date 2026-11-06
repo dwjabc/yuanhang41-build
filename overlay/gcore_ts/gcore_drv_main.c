@@ -18,37 +18,29 @@
 
 #include "gcore_drv_common.h"
 
-extern struct spi_device *gcore_spi_slave;
-
 #include <linux/input.h>
 #include <linux/input/mt.h>
 #include <linux/of_irq.h>
 #include <linux/gpio.h>
-#include <linux/io.h>
-#include <linux/gpio/consumer.h>
 #include <linux/of.h>
 #include <linux/of_gpio.h>
-#include <linux/gpio/machine.h>
 #include <linux/kthread.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
-#ifdef CONFIG_DRM_MSM
+#ifdef CONFIG_TOUCH_DRIVER_RUN_ON_QCOM_PLATFORM
+#ifdef CONFIG_DRM_PANEL_NOTIFIER
 #include <drm/drm_panel.h>
-struct drm_panel *gcore_active_panel;
-#elif defined(CONFIG_FB)
-#include <linux/notifier.h>
-#include <linux/fb.h>
+#endif
 #endif
 
+#ifdef CONFIG_FB
+#include <linux/fb.h>
+#endif
 #define GTP_TRANS_X(x, tpd_x_res, lcm_x_res)     (((x)*(lcm_x_res))/(tpd_x_res))
 #define GTP_TRANS_Y(y, tpd_y_res, lcm_y_res)     (((y)*(lcm_y_res))/(tpd_y_res))
 
 extern int gcore_register_fw_class(void);
-
-#ifdef GCORE_WDT_RECOVERY_ENABLE
-static u8 wdt_valid_values[] = { 0xFF,0xFF,0x72,0x02,0x00,0x01,0xFF,0xFF };
-#endif
-
+extern int gcore_get_fw(void);
 struct gcore_exp_fn_data fn_data = {
 	.initialized = false,
 	.fn_inited = false,
@@ -57,7 +49,55 @@ struct gcore_exp_fn_data fn_data = {
 struct gcore_exp_fn *p_fwu_fn = &fw_update_fn;
 struct gcore_exp_fn *p_intf_fn = &fs_interf_fn;
 struct gcore_exp_fn *p_mp_fn = &mp_test_fn;
-u8 *gcore_i2c_buffer = NULL;
+
+#if GCORE_WDT_RECOVERY_ENABLE
+int wdt_contin;
+#endif
+
+#if 0
+
+void gcore_new_function_register(struct gcore_exp_fn *exp_fn)
+{
+	GTP_DEBUG("gcore_new_function_register fn: %d", exp_fn->fn_type);
+
+	if (!fn_data.initialized) {
+		INIT_LIST_HEAD(&fn_data.list);
+		fn_data.initialized = true;
+	}
+
+	list_add_tail(&exp_fn->link, &fn_data.list);
+
+	if (fn_data.fn_inited) {
+		if (exp_fn->init != NULL) {
+			exp_fn->init(fn_data.gdev);
+		}
+	}
+
+	return;
+}
+
+EXPORT_SYMBOL(gcore_new_function_register);
+
+void gcore_new_function_unregister(struct gcore_exp_fn *exp_fn)
+{
+	struct gcore_exp_fn *fn = NULL;
+	struct gcore_exp_fn *fn_temp = NULL;
+
+	GTP_DEBUG("gcore_new_function_unregister fn: %d", exp_fn->fn_type);
+
+	if (!list_empty(&fn_data.list)) {
+		list_for_each_entry_safe(fn, fn_temp, &fn_data.list, link) {
+			if ((fn == exp_fn) && (fn->remove != NULL)) {
+				fn->remove(fn_data.gdev);
+				list_del(&fn->link);
+			}
+		}
+	}
+}
+
+EXPORT_SYMBOL(gcore_new_function_unregister);
+
+#endif
 
 void gcore_irq_enable(struct gcore_dev *gdev)
 {
@@ -101,11 +141,12 @@ void gcore_irq_disable(struct gcore_dev *gdev)
 
 }
 
+#ifndef CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM
 int gcore_get_gpio_info(struct gcore_dev *gdev, struct device_node *node)
 {
 	int flag = 0;
 
-	gdev->irq_gpio = of_get_named_gpio(node, "gcore,irq-gpio", 0);
+	gdev->irq_gpio = of_get_named_gpio_flags(node, "gcore,irq-gpio", 0, (enum of_gpio_flags *)&flag);
 	if (!gpio_is_valid(gdev->irq_gpio)) {
 		GTP_ERROR("invalid gcore,irq-gpio:%d", gdev->irq_gpio);
 		return -EPERM;
@@ -116,7 +157,7 @@ int gcore_get_gpio_info(struct gcore_dev *gdev, struct device_node *node)
 		return -EPERM;
 	}
 
-	gdev->rst_gpio = of_get_named_gpio(node, "gcore,rst-gpio", 0);
+	gdev->rst_gpio = of_get_named_gpio_flags(node, "gcore,rst-gpio", 0, (enum of_gpio_flags *)&flag);
 	if (!gpio_is_valid(gdev->rst_gpio)) {
 		GTP_ERROR("invalid gcore,reset-gpio:%d", gdev->rst_gpio);
 		return -EPERM;
@@ -126,19 +167,6 @@ int gcore_get_gpio_info(struct gcore_dev *gdev, struct device_node *node)
 		GTP_ERROR("gpio %d request failed!", gdev->rst_gpio);
 		return -EPERM;
 	}
-#if defined(CONFIG_TOUCH_DRIVER_RUN_ON_SPRD_PLATFORM) && defined(CONFIG_GESTURE_SPECIAL_INT)
-	gdev->ges_irq_gpio = of_get_named_gpio(node, "ges,irq-gpio", 0);
-	if (!gpio_is_valid(gdev->ges_irq_gpio)) {
-		GTP_ERROR("invalid ts,ges_irq_gpio:%d", gdev->ges_irq_gpio);
-		return -EPERM;
-	}
-
-	if (gpio_request(gdev->ges_irq_gpio, "ges,irq-gpio")) {
-		GTP_ERROR("gpio %d request failed!", gdev->ges_irq_gpio);
-		return -EPERM;
-	}
-	gpio_set_debounce(gdev->ges_irq_gpio, 2);
-#endif
 
 	return 0;
 
@@ -150,8 +178,12 @@ void gcore_free_gpio(struct gcore_dev *gdev)
 	gpio_free(gdev->rst_gpio);
 }
 
+#endif
 
-#ifdef CONFIG_DRM_MSM
+#ifdef CONFIG_TOUCH_DRIVER_RUN_ON_QCOM_PLATFORM
+#ifdef CONFIG_DRM_PANEL_NOTIFIER
+struct drm_panel *gcore_active_panel;
+
 int gcore_ts_check_dt(struct device_node *np)
 {
 	int i;
@@ -194,7 +226,7 @@ int gcore_ts_check_default_tp(struct device_node *dt, const char *prop)
 
 	gcore_active_tp = kcalloc(count, sizeof(char *), GFP_KERNEL);
 	if (!gcore_active_tp) {
-		GTP_ERROR("Goodix alloc failed\n");
+		GTP_ERROR("gcore active alloc failed\n");
 		return -ENOMEM;
 	}
 
@@ -225,9 +257,16 @@ out:
 	return ret;
 }
 #endif
+#endif
 
 void gcore_get_dts_info(struct gcore_dev *gdev)
 {
+#if defined(CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM)
+	gdev->rst_gpio = GTP_RST_PORT;
+	gdev->irq_gpio = GTP_INT_PORT;
+#elif defined(CONFIG_TOUCH_DRIVER_RUN_ON_RK_PLATFORM) \
+	|| defined(CONFIG_TOUCH_DRIVER_RUN_ON_SPRD_PLATFORM) \
+	|| defined(CONFIG_TOUCH_DRIVER_RUN_ON_QCOM_PLATFORM)
 	struct device_node *node = NULL;
 /*	struct device_node *node = client->dev.of_node;  */
 
@@ -261,7 +300,8 @@ void gcore_get_dts_info(struct gcore_dev *gdev)
 	}
 */
 
-#ifdef CONFIG_DRM_MSM
+#ifdef CONFIG_TOUCH_DRIVER_RUN_ON_QCOM_PLATFORM
+#ifdef CONFIG_DRM_PANEL_NOTIFIER
 	if (gcore_ts_check_dt(node)) {
 		if (!gcore_ts_check_default_tp(node, "qcom,spi-touch-active")) {
 			GTP_DEBUG("check default tp 1");
@@ -272,16 +312,49 @@ void gcore_get_dts_info(struct gcore_dev *gdev)
 		}
 	}
 #endif
+#endif
 
 	if (gcore_get_gpio_info(gdev, node)) {
 		GTP_ERROR("dts get gpio info fail!");
 	}
-
+#endif
 }
 
 int gcore_input_device_init(struct gcore_dev *gdev)
 {
+#if defined(CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM)
+	int tpd_res_x = tpd_dts_data.tpd_resolution[0];
+	int tpd_res_y = tpd_dts_data.tpd_resolution[1];
 
+	gdev->input_device = tpd->dev;
+
+	set_bit(EV_ABS, gdev->input_device->evbit);
+	set_bit(EV_KEY, gdev->input_device->evbit);
+	set_bit(EV_SYN, gdev->input_device->evbit);
+	set_bit(INPUT_PROP_DIRECT, gdev->input_device->propbit);
+
+	input_set_abs_params(gdev->input_device, ABS_MT_POSITION_X, 0, tpd_res_x, 0, 0);
+	input_set_abs_params(gdev->input_device, ABS_MT_POSITION_Y, 0, tpd_res_y, 0, 0);
+	input_set_abs_params(gdev->input_device, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
+
+#ifdef CONFIG_ENABLE_GESTURE_WAKEUP
+	set_bit(GESTURE_KEY, gdev->input_device->keybit);
+#endif
+
+#ifdef CONFIG_ENABLE_TYPE_B_PROCOTOL
+	if (input_mt_init_slots(gdev->input_device, GTP_MAX_TOUCH, INPUT_MT_DIRECT)) {
+		GTP_ERROR("mt slot init fail.");
+	}	
+	set_bit(BTN_TOUCH, gdev->input_device->keybit);
+#else
+	/* for single-touch device */
+	set_bit(BTN_TOUCH, gdev->input_device->keybit);
+#endif
+
+	return 0;
+#elif defined(CONFIG_TOUCH_DRIVER_RUN_ON_RK_PLATFORM) \
+	|| defined(CONFIG_TOUCH_DRIVER_RUN_ON_SPRD_PLATFORM) \
+	|| defined(CONFIG_TOUCH_DRIVER_RUN_ON_QCOM_PLATFORM)
 	int tpd_res_x = TOUCH_SCREEN_X_MAX;
 	int tpd_res_y = TOUCH_SCREEN_Y_MAX;
 
@@ -297,7 +370,6 @@ int gcore_input_device_init(struct gcore_dev *gdev)
 	set_bit(EV_ABS, gdev->input_device->evbit);
 	set_bit(EV_KEY, gdev->input_device->evbit);
 	set_bit(EV_SYN, gdev->input_device->evbit);
-	set_bit(BTN_TOUCH, gdev->input_device->keybit);
 	set_bit(INPUT_PROP_DIRECT, gdev->input_device->propbit);
 
 #ifdef CONFIG_ENABLE_GESTURE_WAKEUP
@@ -306,13 +378,16 @@ int gcore_input_device_init(struct gcore_dev *gdev)
 
 	input_set_abs_params(gdev->input_device, ABS_MT_POSITION_X, 0, tpd_res_x, 0, 0);
 	input_set_abs_params(gdev->input_device, ABS_MT_POSITION_Y, 0, tpd_res_y, 0, 0);
+	input_set_abs_params(gdev->input_device, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
 
 #ifdef CONFIG_ENABLE_TYPE_B_PROCOTOL
 	if (input_mt_init_slots(gdev->input_device, GTP_MAX_TOUCH, 0)) {
 		GTP_ERROR("mt slot init fail.");
 	}
+	set_bit(BTN_TOUCH, gdev->input_device->keybit);
 #else
-	input_set_abs_params(gdev->input,  ABS_MT_TRACKING_ID, 0, GTP_MAX_TOUCH, 0, 0);
+	/* for single-touch device */
+	set_bit(BTN_TOUCH, gdev->input_device->keybit);
 #endif
 
 	input_set_drvdata(gdev->input_device, gdev);
@@ -323,25 +398,37 @@ int gcore_input_device_init(struct gcore_dev *gdev)
 	}
 
 	return 0;
+#endif
 }
 
 void gcore_input_device_deinit(struct gcore_dev *gdev)
 {
+#if defined(CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM)
+	return;
+#elif defined(CONFIG_TOUCH_DRIVER_RUN_ON_RK_PLATFORM) \
+	|| defined(CONFIG_TOUCH_DRIVER_RUN_ON_SPRD_PLATFORM) \
+	|| defined(CONFIG_TOUCH_DRIVER_RUN_ON_QCOM_PLATFORM)
 	input_unregister_device(gdev->input_device);
-
+#endif
 }
 
-void gcore_touch_down(struct input_dev *dev, s32 x, s32 y, u8 id)
+void gcore_touch_down(struct input_dev *dev, s32 x, s32 y, u8 id, u8 area)
 {
 #ifdef CONFIG_ENABLE_TYPE_B_PROCOTOL
 	input_mt_slot(dev, id);
 	input_mt_report_slot_state(dev, MT_TOOL_FINGER, true);
 	input_report_abs(dev, ABS_MT_POSITION_X, x);
 	input_report_abs(dev, ABS_MT_POSITION_Y, y);
+	input_report_abs(dev, ABS_MT_TOUCH_MAJOR, area);
+#ifdef CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM
+	input_report_abs(dev, ABS_MT_PRESSURE, 100);
+#endif
+
 #else
 	input_report_key(dev, BTN_TOUCH, 1);	/* for single-touch device */
 	input_report_abs(dev, ABS_MT_POSITION_X, x);
 	input_report_abs(dev, ABS_MT_POSITION_Y, y);
+	input_report_abs(dev, ABS_MT_TOUCH_MAJOR, area);
 	input_mt_sync(dev);
 #endif
 }
@@ -376,7 +463,33 @@ void gcore_touch_release_all_point(struct input_dev *dev)
 
 	input_sync(dev);
 #ifdef GTP_REPORT_BY_ZTE_ALGO
-	tpd_clean_all_event();
+	if (tpd_cdev->zte_tp_algo)
+		tpd_clean_all_event();
+#endif
+}
+
+void gcore_touch_release_all_point255(struct input_dev *dev)
+{
+	int i = 0;
+
+	GTP_DEBUG("gcore touch release all point255");
+
+#ifdef CONFIG_ENABLE_TYPE_B_PROCOTOL
+	for (i = 0; i < 256; i++)
+	{
+		gcore_touch_up(dev, i);
+	}
+
+	input_report_key(dev, BTN_TOUCH, 0);
+	input_report_key(dev, BTN_TOOL_FINGER, 0);
+#else
+	gcore_touch_up(dev, 0);
+#endif
+
+	input_sync(dev);
+#ifdef GTP_REPORT_BY_ZTE_ALGO
+	if (tpd_cdev->zte_tp_algo)
+		tpd_clean_all_event();
 #endif
 }
 
@@ -438,6 +551,10 @@ void gcore_gesture_event_handler(struct input_dev *dev, int id)
 	case GESTURE_Z:
 		break;
 
+	case GESTURE_PALM:
+		GTP_DEBUG("palm gesture event");
+		break;
+
 	default:
 		break;
 	}
@@ -445,7 +562,6 @@ void gcore_gesture_event_handler(struct input_dev *dev, int id)
 }
 #endif
 
-int gc7202_tp_esd = 1;
 
 static u8 Cal8bitsChecksum(u8 *array, u16 length)
 {
@@ -463,7 +579,6 @@ int gcore_hostdownload_esd_protect(struct gcore_dev *gdev)
 {
 	u8 *coor_data = &gdev->touch_data[0];
 	int sum = 0;
-	int count = 0;
 	int i = 0;
 
 	if (coor_data[0] == 0xB1) {
@@ -473,17 +588,11 @@ int gcore_hostdownload_esd_protect(struct gcore_dev *gdev)
 		}
 
 		if (!sum) {
-			if (!gdev->tp_suspend) {
-				while ((!gc7202_tp_esd) && (count < 100)) {
-					usleep_range(10000, 11000);
-					count++;
-				}
-
-				gc7202_tp_esd = 0;
+			if (!gdev->ts_stat) {
 
 				GTP_DEBUG("watchdog:B1, goto hostdownload!");
 				queue_delayed_work(gdev->fwu_workqueue, &gdev->fwu_work,
-						   msecs_to_jiffies(1000));
+						   msecs_to_jiffies(100));
 			}
 
 			return -EPERM;
@@ -493,6 +602,10 @@ int gcore_hostdownload_esd_protect(struct gcore_dev *gdev)
 	return 0;
 }
 
+#if GCORE_WDT_RECOVERY_ENABLE
+static u8 wdt_valid_values[] = { 0xFF,0xFF,0x72,0x02,0x00,0x01,0xFF,0xFF };
+#endif
+
 s32 gcore_touch_event_handler(struct gcore_dev *gdev)
 {
 	u8 *coor_data = NULL;
@@ -501,39 +614,81 @@ s32 gcore_touch_event_handler(struct gcore_dev *gdev)
 	u8 status = 0;
 	bool touch_end = true;
 	u8 checksum = 0;
+	u16 touchdata = 0;
 #ifdef CONFIG_ENABLE_TYPE_B_PROCOTOL
 	static unsigned long prev_touch;
 #endif
 	unsigned long curr_touch = 0;
 	s32 input_x = 0;
 	s32 input_y = 0;
+	u8	input_area = 0;
 	int data_size = DEMO_DATA_SIZE;
+#if defined(CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM)
+	int tpd_res_x = tpd_dts_data.tpd_resolution[0];
+	int tpd_res_y = tpd_dts_data.tpd_resolution[1];
+	int lcm_res_x = tpd_dts_data.tpd_resolution[0];
+	int lcm_res_y = tpd_dts_data.tpd_resolution[1];
+#elif defined(CONFIG_TOUCH_DRIVER_RUN_ON_RK_PLATFORM) \
+	|| defined(CONFIG_TOUCH_DRIVER_RUN_ON_SPRD_PLATFORM) \
+	|| defined(CONFIG_TOUCH_DRIVER_RUN_ON_QCOM_PLATFORM)
 	int tpd_res_x = TOUCH_SCREEN_X_MAX;
 	int tpd_res_y = TOUCH_SCREEN_Y_MAX;
 	int lcm_res_x = TOUCH_SCREEN_X_MAX;
 	int lcm_res_y = TOUCH_SCREEN_Y_MAX;
+#endif
 
-#ifdef CONFIG_TS_POINT_REPORT_CHECK
+#ifdef CONFIG_TOUCHSCREEN_POINT_REPORT_CHECK
 	cancel_delayed_work_sync(&tpd_cdev->point_report_check_work);
 	queue_delayed_work(tpd_cdev->tpd_report_wq, &tpd_cdev->point_report_check_work, msecs_to_jiffies(150));
 #endif
+
+
+
 #ifdef CONFIG_ENABLE_FW_RAWDATA
 	if (gdev->fw_mode == DEMO) {
 		data_size = DEMO_DATA_SIZE;
 	} else if (gdev->fw_mode == RAWDATA) {
-		data_size = RAW_DATA_SIZE;
+		data_size = g_rawdata_row * g_rawdata_col * 2;
 	} else if (gdev->fw_mode == DEMO_RAWDATA) {
 #ifdef CONFIG_TOUCH_DRIVER_INTERFACE_SPI
 		data_size = 2048;	/* mtk platform spi transfer len request */
 #else
-		data_size = DEMO_RAWDATA_SIZE;
+		data_size = DEMO_DATA_SIZE + (g_rawdata_row * g_rawdata_col * 2);
+#endif
+	} else if (gdev->fw_mode == DEMO_RAWDATA_DEBUG) {
+#ifdef CONFIG_TOUCH_DRIVER_INTERFACE_SPI
+		data_size = 2048;	/* mtk platform spi transfer len request */
+#else
+		data_size = DEMO_DATA_SIZE + ((g_rawdata_row+1)*(g_rawdata_col+1) * 2)  ;
+#endif
+	}
+	else if (gdev->fw_mode == FW_DEBUG) {
+		data_size = 175;
+		/* data_size = gdev->fw_packet_len; */
+
+	}else {
+#ifdef CONFIG_TOUCH_DRIVER_INTERFACE_SPI
+		data_size = 2048;	/* mtk platform spi transfer len request */
+#else
+		data_size = DEMO_DATA_SIZE + (g_rawdata_row * g_rawdata_col * 2);
 #endif
 	}
 #endif
+	if (data_size > DEMO_RAWDATA_MAX_SIZE) {
+		GTP_ERROR("touch data read length exceed MAX_SIZE.");
+		return -EPERM;
+	}
 
 	if (gcore_bus_read(gdev->touch_data, data_size)) {
 		GTP_ERROR("touch data read error.");
 		return -EPERM;
+	}
+/* printk("<tian> data_size = %d\n",data_size); */
+	if(gdev->fw_mode == DEMO_RAWDATA_DEBUG){
+		for(i=1152+65;i<1319;i+=2){
+			touchdata = (gdev->touch_data[i+1] << 8) | gdev->touch_data[i];
+			printk("<tian> touch_data = %d,touch_data[%d+1]=%d,touch_data[%d]=%d\n",touchdata,i,gdev->touch_data[i+1],i,gdev->touch_data[i]);
+		}
 	}
 #ifdef CONFIG_ENABLE_FW_RAWDATA
 	if (gdev->usr_read) {
@@ -548,12 +703,28 @@ s32 gcore_touch_event_handler(struct gcore_dev *gdev)
 
 	coor_data = &gdev->touch_data[0];
 
-#ifdef GCORE_WDT_RECOVERY_ENABLE
-	gdev->tp_esd_check_error = false;
-	if (!gdev->ts_stat && (!gdev->tp_fw_update) && (!gdev->tp_self_test)) {
-		mod_delayed_work(gdev->fwu_workqueue, &gdev->wdt_work, \
-			msecs_to_jiffies(GCORE_WDT_TIMEOUT_PERIOD));
+	if (demolog_enable) {
+		GTP_DEBUG("demolog dbg is on!");
+		dump_demo_data_to_csv_file(coor_data, 10, 6);
+	}
+	if(gdev->notify_state){
+			if(check_notify_event(coor_data[63],gdev->fw_event)){
+				GTP_DEBUG("Notify fw event interrupt detected");
+				mod_delayed_work(gdev->fwu_workqueue, &gdev->event_work, \
+					msecs_to_jiffies(36));
+				notify_contin = 0;
+				gdev->notify_state = false;
+			}
+		}
+
+#if GCORE_WDT_RECOVERY_ENABLE
+	if (!gdev->ts_stat) {
+
 		if (!memcmp(coor_data, wdt_valid_values, sizeof(wdt_valid_values))) {
+			GTP_DEBUG("WDT interrupt detected");
+			mod_delayed_work(gdev->fwu_workqueue, &gdev->wdt_work, \
+				msecs_to_jiffies(GCORE_WDT_TIMEOUT_PERIOD));
+			wdt_contin = 0;
 			return 0; /* WDT interrupt detected */
 		}
 	}
@@ -569,17 +740,20 @@ s32 gcore_touch_event_handler(struct gcore_dev *gdev)
 
 	checksum = Cal8bitsChecksum(coor_data, DEMO_DATA_SIZE - 1);
 	if (checksum != coor_data[DEMO_DATA_SIZE - 1]) {
+#ifdef CONFIG_VENDOR_ZTE_LOG_EXCEPTION
 		tpd_zlog_record_notify(TP_CRC_ERROR_NO);
-		GTP_ERROR("checksum error! read:%x cal:%x", coor_data[DEMO_DATA_SIZE - 1], checksum);
-		GTP_ERROR("frame 0-15: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
-			  coor_data[0], coor_data[1], coor_data[2], coor_data[3],
-			  coor_data[4], coor_data[5], coor_data[6], coor_data[7],
-			  coor_data[8], coor_data[9], coor_data[10], coor_data[11],
-			  coor_data[12], coor_data[13], coor_data[14], coor_data[15]);
-		GTP_ERROR("frame 56-64: %02x %02x %02x %02x %02x %02x %02x %02x %02x",
-			  coor_data[56], coor_data[57], coor_data[58], coor_data[59],
-			  coor_data[60], coor_data[61], coor_data[62], coor_data[63],
-			  coor_data[64]);
+#endif
+		GTP_ERROR("checksum error! read:%x cal:%x", \
+			coor_data[DEMO_DATA_SIZE - 1], checksum);
+#if 1
+		for (i = 1; i <= 10; i++) {
+			GTP_DEBUG("demo %d:%x %x %x %x %x %x", i, coor_data[6*i-6], \
+				coor_data[6*i-5], coor_data[6*i-4], coor_data[6*i-3], \
+				coor_data[6*i-2], coor_data[6*i-1]);
+		}
+		GTP_DEBUG("demo:%x %x %x %x", coor_data[60], coor_data[61], \
+			coor_data[62], coor_data[63]);
+#endif
 		return -EPERM;
 	}
 
@@ -588,10 +762,17 @@ s32 gcore_touch_event_handler(struct gcore_dev *gdev)
 #endif
 
 	for (i = 1; i <= GTP_MAX_TOUCH; i++) {
-		/*GTP_DEBUG("i:%d data:%x %x %x %x %x %x", i, coor_data[0], coor_data[1],
-			  coor_data[2], coor_data[3], coor_data[4], coor_data[5]); */
+		GTP_REPORT("i:%d data:%x %x %x %x %x %x", i, coor_data[0], coor_data[1],
+			  coor_data[2], coor_data[3], coor_data[4], coor_data[5]);
 
-		if (coor_data[0] == 0xFF) {
+#if GCORE_WDT_RECOVERY_ENABLE
+		if (!gdev->ts_stat) {
+			mod_delayed_work(gdev->fwu_workqueue, &gdev->wdt_work, \
+			  msecs_to_jiffies(GCORE_WDT_TIMEOUT_PERIOD));
+			wdt_contin = 0;
+		}
+#endif
+		if ((coor_data[0] == 0xFF) || (coor_data[0] == 0x00)) {
 			coor_data += 6;
 			continue;
 		}
@@ -601,18 +782,29 @@ s32 gcore_touch_event_handler(struct gcore_dev *gdev)
 		status = coor_data[0] & 0x03;
 		input_x = ((coor_data[1] << 4) | (coor_data[3] >> 4));
 		input_y = ((coor_data[2] << 4) | (coor_data[3] & 0x0F));
+		input_area = coor_data[4];
+		if (input_area < 5)
+			input_area = 5;
 
-		/*GTP_DEBUG("id:%d (x=%d,y=%d)", id, input_x, input_y);
-		GTP_DEBUG("tpd_x=%d tpd_y=%d lcm_x=%d lcm_y=%d", tpd_res_x, tpd_res_y, lcm_res_x, lcm_res_y); */
+		GTP_REPORT("id:%d (x=%d,y=%d,area=%d)", id, input_x, input_y,input_area);
+		GTP_REPORT("tpd_x=%d tpd_y=%d lcm_x=%d lcm_y=%d", tpd_res_x, tpd_res_y, lcm_res_x, lcm_res_y);
+		if (id > GTP_MAX_TOUCH) {
+			coor_data += 6;
+			continue;
+		}
 
 		input_x = GTP_TRANS_X(input_x, tpd_res_x, lcm_res_x);
 		input_y = GTP_TRANS_Y(input_y, tpd_res_y, lcm_res_y);
 
 		set_bit(id, &curr_touch);
 #ifdef GTP_REPORT_BY_ZTE_ALGO
-		tpd_touch_press(gdev->input_device, input_x, input_y, id - 1,  0, 0);
+		if (tpd_cdev->zte_tp_algo) {
+			tpd_touch_press(gdev->input_device, input_x, input_y, id - 1, input_area, 0);
+		} else {
+			gcore_touch_down(gdev->input_device, input_x, input_y, id - 1, input_area);
+		}
 #else
-		gcore_touch_down(gdev->input_device, input_x, input_y, id - 1);
+		gcore_touch_down(gdev->input_device, input_x, input_y, id - 1, input_area);
 #endif
 		coor_data += 6;
 
@@ -622,7 +814,11 @@ s32 gcore_touch_event_handler(struct gcore_dev *gdev)
 	for (i = 1; i <= GTP_MAX_TOUCH; i++) {
 		if (!test_bit(i, &curr_touch) && test_bit(i, &prev_touch)) {
 #ifdef GTP_REPORT_BY_ZTE_ALGO
-			tpd_touch_release(gdev->input_device, i - 1);
+			if (tpd_cdev->zte_tp_algo) {
+				tpd_touch_release(gdev->input_device, i - 1);
+			} else {
+				gcore_touch_up(gdev->input_device, i - 1);
+			}
 #else
 			gcore_touch_up(gdev->input_device, i - 1);
 #endif
@@ -660,6 +856,8 @@ static irqreturn_t tpd_event_handler(int irq, void *dev_id)
 
 	mutex_lock(&gdev->transfer_lock);
 	/* don't reset before "if (tpd_halt..."  */
+	GTP_REPORT("tpd_event_handler enter.");
+
 	if (gcore_touch_event_handler(gdev)) {
 		GTP_ERROR("touch event handler error.");
 	}
@@ -691,32 +889,36 @@ static irqreturn_t tpd_eint_interrupt_handler(int irq, void *dev_id)
 	if (!found) {
 		gdev->tpd_flag = 1;
 		return IRQ_WAKE_THREAD;
+	} else {
+		wake_up_interruptible(&gdev->wait);
+		return IRQ_HANDLED;
 	}
-	wake_up_interruptible(&gdev->wait);
-	return IRQ_HANDLED;
 
 }
 
 static int tpd_irq_registration(struct gcore_dev *gdev)
 {
 	int ret = 0;
+#ifdef CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM
+	struct device_node *node = NULL;
+#endif
 
 	GTP_DEBUG("Device Tree Tpd_irq_registration!");
 
+#if defined(CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM)
+	node = of_find_matching_node(node, touch_of_match);
+	if (node) {
+		gdev->touch_irq = irq_of_parse_and_map(node, 0);
+		GTP_DEBUG("Device touch_irq = %d!", gdev->touch_irq);
+	} else {
+		GTP_ERROR("tpd request_irq can not find touch eint device node!.");
+		ret = -1;
+	}
+#elif defined(CONFIG_TOUCH_DRIVER_RUN_ON_RK_PLATFORM) \
+	|| defined(CONFIG_TOUCH_DRIVER_RUN_ON_SPRD_PLATFORM) \
+	|| defined(CONFIG_TOUCH_DRIVER_RUN_ON_QCOM_PLATFORM)
 	gdev->touch_irq = gpio_to_irq(gdev->irq_gpio);
 
-#if defined(CONFIG_TOUCH_DRIVER_RUN_ON_SPRD_PLATFORM) && defined(CONFIG_GESTURE_SPECIAL_INT)
-	gdev->ges_irq = gpio_to_irq(gdev->ges_irq_gpio);
-	if (gdev->ges_irq) {
-		ret = request_irq(gdev->ges_irq, (irq_handler_t) tpd_eint_interrupt_handler,
-				  IRQ_TYPE_LEVEL_LOW | IRQF_ONESHOT, "ges-int", gdev);
-		if (!ret) {
-			gdev->ges_irq_en = true;
-			gdev->gesture_wakeup_en = false;
-			gcore_enable_irq_wake(gdev);
-			gcore_ges_irq_disable(gdev);
-		}
-	}
 #endif
 
 	ret = devm_request_threaded_irq(&gdev->bus_device->dev, gdev->touch_irq,
@@ -736,155 +938,90 @@ void gcore_gpio_rst_output(int rst, int level)
 
 	GTP_DEBUG("gpio rst = %d output level = %d", rst, level);
 
+#if defined(CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM)
+	if (level) {
+		tpd_gpio_output(rst, 1);
+	} else {
+		tpd_gpio_output(rst, 0);
+	}
+#elif defined(CONFIG_TOUCH_DRIVER_RUN_ON_RK_PLATFORM) \
+	|| defined(CONFIG_TOUCH_DRIVER_RUN_ON_SPRD_PLATFORM) \
+	|| defined(CONFIG_TOUCH_DRIVER_RUN_ON_QCOM_PLATFORM)
 	if (level) {
 		gpio_direction_output(rst, 1);
 	} else {
 		gpio_direction_output(rst, 0);
 	}
 
+#endif
+
 }
 
 int gcore_probe_device(void)
 {
+#if 0
 #if defined(CONFIG_ENABLE_CHIP_TYPE_GC7371)
 	u16 chip_type = 0x7371;
 #elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7271)
 	u16 chip_type = 0x7271;
 #elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202)
-	u16 chip_type = 0x0200;
+	u16 chip_type = 0x7202;
 #elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
 	u16 chip_type = 0x7372;
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
+	u16 chip_type = 0x7302;
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
+	u16 chip_type = 0x7203;
 #endif
-	u8 buf[3] = { 0 };
+#endif
+	u8 buf[2] = { 0 };
 	u16 id = 0;
 	int retries = 0;
 	int ret = 0;
 
-	/* The GC7202 is a TDDI: touch shares the panel's power rails and the
-	 * reset line. On Android the vendor panel driver probe raises
-	 * iovdd/avdd/avee and runs sprd,reset-on-sequence BEFORE the touch
-	 * probe - the touch then answers its chip id immediately. On OpenWrt
-	 * nothing had driven any of it, so every SPI id read returned 0000.
-	 * Replicate the exact unicorn dtsi sequence here.
-	 *
-	 * rails: iovdd first, then avdd/avee; reset:
-	 *   <1 10> <0 10> <1 35> <0 10> <1 10> <0 10> <1 10> <0 10> <1 30>
-	 */
-	{
-		struct device_node *panel_np =
-			of_find_node_by_path("/soc/dpuvsp/dsi@31300000/panel");
-		static const char *const rails[] = { "iovdd", "avdd", "avee" };
-		struct gpio_desc *rst;
-		int i;
-
-		if (!panel_np) {
-			GTP_ERROR("panel node missing; touch power sequence skipped");
-		} else {
-			/* iovdd is the one rail nobody claims on OpenWrt
-			 * (avdd/avee are raised by the panel driver); read
-			 * the gpio numbers straight from the DT property
-			 * <phandle gpio flags> and drive each one high. */
-			for (i = 0; i < 3; i++) {
-				struct gpio_desc *rail;
-
-				rail = fwnode_gpiod_get_index(
-					of_fwnode_handle(panel_np), rails[i],
-					0, GPIOD_OUT_HIGH, "gcore-rail");
-				if (IS_ERR(rail)) {
-					GTP_DEBUG("%s rail get failed: %ld",
-						  rails[i], PTR_ERR(rail));
-					continue;
-				}
-				gpiod_put(rail); /* keep driven high */
-				GTP_DEBUG("%s driven high", rails[i]);
-			}
-			of_node_put(panel_np);
-			msleep(30);
-
-			rst = gpiod_get_optional(&gcore_spi_slave->dev,
-					"rst", GPIOD_OUT_HIGH);
-			if (IS_ERR(rst))
-				rst = NULL;
-			{
-				static const int seq[][2] = {
-					{ 1, 10 }, { 0, 10 }, { 1, 35 },
-					{ 0, 10 }, { 1, 10 }, { 0, 10 },
-					{ 1, 10 }, { 0, 10 }, { 1, 30 },
-				};
-				int st;
-
-				for (st = 0; st < 9; st++) {
-					if (rst)
-						gpiod_set_value_cansleep(
-							rst, seq[st][0]);
-					msleep(seq[st][1]);
-				}
-			}
-			if (rst)
-				gpiod_put(rst);
-		}
-	}
-
-	while (retries++ < 20) {  /* 20s window covers late panel power-on */
+	while (retries++ < 3) {
 		gcore_idm_read_id(buf, sizeof(buf));
 
-		id = (buf[1] << 8) | buf[2];
+		id = (buf[0] << 8) | buf[1];
 
-		if (id == chip_type) {
-			GTP_DEBUG("GC%04x chip id match success", id);
+		if ((id != 0) && ((id & 0xff) != 0xff)) {
+			GTP_DEBUG("GC%04x chip id match success",id);
 			ret = 0;
 			break;
+		} else {
+			GTP_ERROR("GC%04x chip id match fail! retries:%d", id, retries);
+			ret = -1;
 		}
-		GTP_ERROR("GC%04x chip id match fail! retries:%d", id, retries);
-		msleep(1000);
-		ret = -1;
+
+		usleep_range(1000, 1100);
 	}
 
 	return ret;
 }
 
-#ifdef GCORE_WDT_RECOVERY_ENABLE
+#if GCORE_WDT_RECOVERY_ENABLE
 void gcore_wdt_recovery_works(struct work_struct *work)
 {
 	struct gcore_dev *gdev = fn_data.gdev;
-	static u8 last[DEMO_DATA_SIZE];
-	static int have_last;
-	u8 frame[DEMO_DATA_SIZE];
-	int irq_lvl = -1;
-	int i, sum = 0, changed = 0;
 
-	/* Self-perpetuating sensor probe: read the full report window every
-	 * cycle, independent of the interrupt path, and log whenever the
-	 * content changes (a finger over the sensor moves these values a
-	 * lot). */
-	if (!gcore_bus_read(frame, sizeof(frame))) {
-		if (gdev->irq_gpio >= 0)
-			irq_lvl = gpio_get_value(gdev->irq_gpio);
-		for (i = 0; i < DEMO_DATA_SIZE - 1; i++)
-			sum += frame[i];
-		if (have_last)
-			for (i = 0; i < DEMO_DATA_SIZE; i++)
-				if (frame[i] != last[i]) { changed = 1; break; }
-		if (!have_last || changed)
-			GTP_ERROR("POLL irq%d sum%02x: %02x %02x %02x %02x %02x %02x %02x %02x | %02x %02x %02x %02x %02x %02x %02x %02x",
-				  irq_lvl, sum & 0xff,
-				  frame[0], frame[1], frame[2], frame[3],
-				  frame[4], frame[5], frame[6], frame[7],
-				  frame[57], frame[58], frame[59], frame[60],
-				  frame[61], frame[62], frame[63], frame[64]);
-		memcpy(last, frame, sizeof(frame));
-		have_last = 1;
-	}
+	wdt_contin++;
+	mp_wait_int_set_fail();
+	GTP_ERROR("WDT timeout recovery ts:%d,wdtime:%d", gdev->ts_stat, wdt_contin);
 
-	if (gdev->fwu_workqueue)
-		queue_delayed_work(gdev->fwu_workqueue, work,
-				   msecs_to_jiffies(GCORE_WDT_TIMEOUT_PERIOD));
-	if (!gdev->ts_stat && (!gdev->tp_fw_update) && (!gdev->tp_self_test)) {
-		gdev->tp_esd_check_error = true;
+	if (!gdev->ts_stat) {
+#ifdef CONFIG_VENDOR_ZTE_LOG_EXCEPTION
 		tpd_zlog_record_notify(TP_ESD_CHECK_ERROR_NO);
+#endif
+		if (wdt_contin < 2) {
+			gcore_request_firmware_update_work(NULL);
+		} else {
+			gcore_trigger_esd_recovery();
+			wdt_contin = 0;
+		}
 	}
 }
 #endif
+
 s32 gcore_init(struct gcore_dev *gdev)
 {
 	int data_size = DEMO_DATA_SIZE;
@@ -896,6 +1033,7 @@ s32 gcore_init(struct gcore_dev *gdev)
 
 	spin_lock_init(&gdev->irq_flag_lock);
 	mutex_init(&gdev->transfer_lock);
+	mutex_init(&gdev->ITOTEST_lock);
 	init_waitqueue_head(&gdev->wait);
 
 	fn_data.gdev = gdev;
@@ -915,7 +1053,7 @@ s32 gcore_init(struct gcore_dev *gdev)
 	gdev->usr_read = false;
 	gdev->data_ready = false;
 
-	data_size = DEMO_RAWDATA_SIZE;
+	data_size = DEMO_RAWDATA_MAX_SIZE;
 #endif
 	gdev->tp_fw_update = false;
 	gdev->tp_self_test = false;
@@ -923,29 +1061,45 @@ s32 gcore_init(struct gcore_dev *gdev)
 	gdev->headset_mode = false;
 	gdev->display_rotation = 0;
 	gdev->touch_data = kzalloc(data_size, GFP_KERNEL);
-	if (gdev->touch_data == NULL) {
+	if (IS_ERR_OR_NULL(gdev->touch_data)) {
 		GTP_ERROR("Allocate touch data mem fail!");
 		return -ENOMEM;
 	}
-
 /* gcore_gpio_rst_output(gdev->rst_gpio, 1); */
+
+#ifdef CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM
+	tpd_load_status = 1;
+#endif
 
 	gdev->fwu_workqueue = create_singlethread_workqueue("fwu_workqueue");
 	INIT_DELAYED_WORK(&gdev->fwu_work, gcore_request_firmware_update_work);
+#if GCORE_WDT_RECOVERY_ENABLE
 	INIT_DELAYED_WORK(&gdev->wdt_work, gcore_wdt_recovery_works);
-	queue_delayed_work(gdev->fwu_workqueue, &gdev->wdt_work,
-			   msecs_to_jiffies(3000));
-
-#ifdef GCORE_WDT_RECOVERY_ENABLE
 #endif
+
+/* tian add notify fw event */
+	INIT_DELAYED_WORK(&gdev->event_work, gcore_fw_event_notify_work);
+
+	gdev->ts_stat = TS_NORMAL;
 
 	return 0;
 }
+
 
 void gcore_deinit(struct gcore_dev *gdev)
 {
 	struct gcore_exp_fn *exp_fn = NULL;
 	struct gcore_exp_fn *exp_fn_temp = NULL;
+
+	GTP_INFO("%s enter, exp fn remove\n", __func__);
+#if GCORE_WDT_RECOVERY_ENABLE
+	gdev->ts_stat = 1;
+	cancel_delayed_work_sync(&fn_data.gdev->wdt_work);
+#endif
+	cancel_delayed_work_sync(&fn_data.gdev->fwu_work);
+	cancel_delayed_work_sync(&fn_data.gdev->event_work);
+	destroy_workqueue(gdev->fwu_workqueue);
+	gdev->irq_disable(gdev);
 
 	if (!list_empty(&fn_data.list)) {
 		list_for_each_entry_safe(exp_fn, exp_fn_temp, &fn_data.list, link) {
@@ -954,21 +1108,30 @@ void gcore_deinit(struct gcore_dev *gdev)
 			}
 		}
 	}
-	destroy_workqueue(gdev->fwu_workqueue);
+	GTP_INFO("%s destroy workqueue\n", __func__);
 
 	kfree(gdev->touch_data);
 
+#ifndef CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM
 	gcore_free_gpio(gdev);
-
+#endif
+	GTP_INFO("%s, input device deinit\n", __func__);
 	gcore_input_device_deinit(gdev);
 
 	kfree(gdev);
+
 }
 
 int gcore_touch_probe(struct gcore_dev *gdev)
 {
+#if 0
+	struct gcore_exp_fn *exp_fn = NULL;
+	struct gcore_exp_fn *exp_fn_temp = NULL;
+#endif
 
 	GTP_DEBUG("tpd_registration start.");
+
+	GTP_DEBUG("tp drv ver:%s", TOUCH_DRIVER_RELEASE_VERISON);
 
 	gcore_get_dts_info(gdev);
 
@@ -977,12 +1140,15 @@ int gcore_touch_probe(struct gcore_dev *gdev)
 	if (gcore_init(gdev)) {
 		GTP_ERROR("gcore init fail!");
 	}
+#ifdef CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM
+	tpd_gpio_as_int(GTP_INT_PORT);
+#endif
 
-	msleep(20);
+	msleep(50);
 
 	/* EINT device tree, default EINT enable */
 	tpd_irq_registration(gdev);
-
+	gcore_get_fw();
 	list_add_tail(&p_fwu_fn->link, &fn_data.list);
 	if (p_fwu_fn->init != NULL) {
 		p_fwu_fn->init(fn_data.gdev);
@@ -997,8 +1163,32 @@ int gcore_touch_probe(struct gcore_dev *gdev)
 	if (p_mp_fn->init != NULL) {
 		p_mp_fn->init(fn_data.gdev);
 	}
+#if 0
+	if (!list_empty(&fn_data.list)) {
+		list_for_each_entry_safe(exp_fn, exp_fn_temp, &fn_data.list, link) {
+			if (exp_fn->init != NULL) {
+				exp_fn->init(gdev);
+			}
+		}
+	}
+#endif
 
-#ifdef CONFIG_DRM_MSM
+#ifdef CONFIG_TOUCH_DRIVER_RUN_ON_SPRD_PLATFORM
+#ifdef TP_RESUME_BY_FB_NOTIFIER
+	GTP_DEBUG("Init notifier_fb struct");
+	gdev->fb_notifier.notifier_call = gcore_ts_fb_notifier_callback;
+	if (fb_register_client(&gdev->fb_notifier)) {
+		GTP_ERROR("[FB]Unable to register fb_notifier.");
+	}
+#else
+	if (gcore_sysfs_add_device(&gdev->bus_device->dev)) {
+		GTP_ERROR("gcore sysfs add device fail!");
+	}
+#endif
+#endif
+
+#ifdef CONFIG_TOUCH_DRIVER_RUN_ON_QCOM_PLATFORM
+#ifdef CONFIG_DRM_PANEL_NOTIFIER
 	GTP_DEBUG("Init notifier_drm struct");
 	gdev->drm_notifier.notifier_call = gcore_ts_drm_notifier_callback;
 
@@ -1006,9 +1196,7 @@ int gcore_touch_probe(struct gcore_dev *gdev)
 		if (drm_panel_notifier_register(gcore_active_panel, &gdev->drm_notifier) < 0)
 			GTP_ERROR("register notifier failed!");
 	}
-#elif defined(CONFIG_FB)
-	/* blank coordination removed with the fbdev notifier (6.9):
-	 * this build keeps the panel always on, register nothing. */
+#endif
 #endif
 
 	return 0;
@@ -1041,16 +1229,13 @@ s32 gcore_i2c_read(u8 *buffer, s32 len)
 		{
 		 .addr = gcore_i2c_client->addr,
 		 .flags = I2C_M_RD,
-		 .buf = gcore_i2c_buffer,
+		 .buf = buffer,
 		 .len = data_length,
 #ifdef CONFIG_TOUCH_DRIVER_RUN_ON_RK_PLATFORM
 		 .scl_rate = 400000,
 #endif
 		 },
 	};
-
-	if (len > I2C_BUF_SIZE)
-		return -EIO;
 
 /*
 * According to i2c-mtk.c __mt_i2c_transfer(),mtk i2c always use DMA mode.
@@ -1069,7 +1254,7 @@ s32 gcore_i2c_read(u8 *buffer, s32 len)
 		GTP_ERROR("I2C Transfer error!");
 		return -EPERM;
 	}
-	memcpy(buffer, gcore_i2c_buffer, len);
+
 	return 0;
 
 }
@@ -1082,15 +1267,11 @@ s32 gcore_i2c_write(u8 *buffer, s32 len)
 		.flags = 0,
 		.addr = gcore_i2c_client->addr,
 		.len = len,
-		.buf = gcore_i2c_buffer,
+		.buf = buffer,
 #ifdef CONFIG_TOUCH_DRIVER_RUN_ON_RK_PLATFORM
 		.scl_rate = 100000,
 #endif
 	};
-
-	if (len > I2C_BUF_SIZE)
-			return -EIO;
-	memcpy(gcore_i2c_buffer, buffer, len);
 
 /*
 * According to i2c-mtk.c __mt_i2c_transfer(),mtk i2c always use DMA mode.
@@ -1121,25 +1302,17 @@ static s32 gcore_i2c_probe(struct i2c_client *client, const struct i2c_device_id
 	GTP_DEBUG("tpd_i2c_probe start.");
 
 	gcore_i2c_client = client;
-	gcore_i2c_buffer = kzalloc(sizeof(u8) * I2C_BUF_SIZE, GFP_KERNEL);
-	if (gcore_i2c_buffer == NULL) {
-		GTP_DEBUG("%s: gcore i2c buffer alloc failed!\n", __func__);
-		return -ENOMEM;
-	}
-	GTP_DEBUG("gcore_i2c_client->addr:0x%x", gcore_i2c_client->addr);
+
 	/* GC7371 use rst pin and need init before use */
 #ifndef CONFIG_ENABLE_CHIP_TYPE_GC7371
-	/* The GC7202 idm register read returns 0000 on this hardware even in
-	 * the working state (verified identical on the stock system), so a
-	 * chip-id miss is not fatal: log and continue - the touch data path
-	 * uses the normal register commands, not the idm window. */
 	if (gcore_probe_device()) {
-		GTP_ERROR("gcore probe device fail - continuing (idm read is gated on this hw)");
+		GTP_ERROR("gcore probe device fail!");
+		return -EPERM;
 	}
 #endif
 
 	touch_dev = kzalloc(sizeof(struct gcore_dev), GFP_KERNEL);
-	if (!touch_dev) {
+	if (IS_ERR_OR_NULL(touch_dev)) {
 		GTP_ERROR("allocate touch_dev mem fail!");
 		return -ENOMEM;
 	}
@@ -1147,9 +1320,13 @@ static s32 gcore_i2c_probe(struct i2c_client *client, const struct i2c_device_id
 	touch_dev->bus_device = client;
 
 	i2c_set_clientdata(client, touch_dev);
+
 	if (gcore_touch_probe(touch_dev)) {
 		GTP_ERROR("touch registration fail!");
+#ifdef CONFIG_VENDOR_ZTE_LOG_EXCEPTION
+	if (tpd_cdev->tp_chip_id == TS_CHIP_GCORE)
 		tpd_cdev->ztp_probe_fail_chip_id = TS_CHIP_GCORE;
+#endif
 		return -EPERM;
 	}
 	gcore_register_fw_class();
@@ -1158,16 +1335,18 @@ static s32 gcore_i2c_probe(struct i2c_client *client, const struct i2c_device_id
 	return 0;
 }
 
-static void gcore_i2c_remove(struct i2c_client *client)
+static int gcore_i2c_remove(struct i2c_client *client)
 {
 	struct gcore_dev *gdev = i2c_get_clientdata(client);
 
 	gcore_deinit(gdev);
+
+	return 0;
 }
 
 static int gcore_i2c_detect(struct i2c_client *client, struct i2c_board_info *info)
 {
-	strscpy(info->type, "mtk-tpd", sizeof(info->type));
+	strlcpy(info->type, "mtk-tpd", sizeof(info->type));
 	return 0;
 }
 
@@ -1186,66 +1365,38 @@ static struct i2c_driver tpd_i2c_driver = {
 
 #elif defined(CONFIG_TOUCH_DRIVER_INTERFACE_SPI)
 
-struct spi_device *gcore_spi_slave = NULL;
-
-/* empirical tuning knobs: gcore_ts.mode=<0-3> gcore_ts.speed=<hz> on the
- * kernel cmdline let us sweep SPI mode and clock without rebuilding. */
-static int gcore_spi_mode = 3;
-module_param_named(mode, gcore_spi_mode, int, 0644);
-MODULE_PARM_DESC(mode, "SPI mode (0-3), default 3");
-
-static uint gcore_spi_speed = 10000000;
-module_param_named(speed, gcore_spi_speed, uint, 0644);
-MODULE_PARM_DESC(speed, "SPI clock in Hz, default 10000000");
-
-/* SPI_INF1_SYS_SEL matrix routing field (global ctrl reg7 bits 2-3 on the
- * AON pin controller): nobody ever writes it in this tree because the
- * sprd pinctrl mux skips GLOBAL_CTRL pins entirely. Set via
- * gcore_ts.mux_sel=<0-3> to route controller 1 to the touch connector. */
-static int gcore_mux_sel = -1;
-module_param_named(mux_sel, gcore_mux_sel, int, 0644);
-MODULE_PARM_DESC(mux_sel, "SPI_INF1_SYS_SEL routing value 0-3, -1 = leave");
-
-static void gcore_apply_mux_sel(int v)
-{
-	void __iomem *base;
-	u32 reg;
-
-	base = ioremap(0x642e0000, 0x100);
-	if (!base) {
-		GTP_ERROR("mux_sel ioremap fail");
-		return;
-	}
-	reg = readl(base + 0x1c);
-	reg = (reg & ~0xC) | ((v & 3) << 2);
-	writel(reg, base + 0x1c);
-	GTP_INFO("SPI_INF1_SYS_SEL <- %d (reg 0x%08x)", v, reg);
-	iounmap(base);
-}
+struct spi_device *gcore_spi_slave;
 
 /*
 * mtk spi use DMA mode when transfer length over 32 bytes.
 * out buffer should allocate DMA memory over 32 bytes.
 * TODO:put the allocate memory in init or probe will be better.
 */
+static void *tx = NULL;
+static void *rx = NULL;
 static s32 gcore_spi_setup_xfer(struct spi_transfer *xfer, u32 len)
 {
 
-	xfer->len = len;
-	xfer->tx_buf = kzalloc(len, GFP_KERNEL | GFP_DMA);
-	if (xfer->tx_buf == NULL) {
+	if (IS_ERR_OR_NULL(tx)) {
+		tx = kzalloc(FW_SIZE, GFP_KERNEL | GFP_DMA);
+	}
+	if (tx == NULL) {
 		GTP_ERROR("tx kzalloc fail!");
 		return -ENOMEM;
 	}
 
-	xfer->rx_buf = kzalloc(len, GFP_KERNEL | GFP_DMA);
-	if (xfer->rx_buf == NULL) {
+	if (IS_ERR_OR_NULL(rx)) {
+		rx = kzalloc(FW_SIZE, GFP_KERNEL | GFP_DMA);
+	}
+	if (rx == NULL) {
 		GTP_ERROR("rx kzalloc fail!");
-		kfree(xfer->tx_buf);
+		kfree(tx);
 		return -ENOMEM;
 	}
-/* memset(xfer->rx_buf, 0, xfer->len); */
-/* memset((u8 *)xfer->tx_buf, 0, xfer->len); */
+
+	xfer->len = len;
+	xfer->tx_buf = tx;
+	xfer->rx_buf = rx;
 
 	return 0;
 
@@ -1259,7 +1410,7 @@ s32 gcore_spi_read(u8 *buffer, s32 len)
 
 /* GTP_DEBUG("spi read. len = %d", len); */
 
-#ifdef CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM
+#ifdef CONFIG_MTK_LEGACY_PLATFORM
 	/* MTK spi.c if transfer > 1024 bytes, the lens must be a multiple of 1024  */
 	if ((len > 1024) && (len % 1024)) {
 		GTP_ERROR("mtk spi tansfer len must be a multiple of 1024!");
@@ -1269,16 +1420,17 @@ s32 gcore_spi_read(u8 *buffer, s32 len)
 
 	spi_message_init(&msg);
 	/* The 6.18 spi-sprd driver DMAs only whole fragment steps (8 bytes
-	 * at 8-bit words) and leaves the remainder to a tail read that
-	 * drops bytes on this silicon - the vendor 5.4 driver rounded the
-	 * DMA length UP instead. Align the transfer so the round-down never
-	 * truncates the report stream; the extra clocks only read past the
-	 * end of the chip's report buffer and are discarded here. */
+	 * at 8-bit words) and recovers the tail in the RX_END irq, which
+	 * drops the final byte on this hardware; the vendor 5.4 controller
+	 * driver rounded the DMA length up instead. Align the transfer so
+	 * the round-down never truncates the report stream. */
 	ret = gcore_spi_setup_xfer(&transfer, ALIGN(len, 8));
 	if (ret) {
 		GTP_ERROR("gcore spi setup xfer fail!");
 		return -EPERM;
 	}
+
+	memset((void *)transfer.tx_buf,0xff,transfer.len);
 
 	spi_message_add_tail(&transfer, &msg);
 	ret = spi_sync(gcore_spi_slave, &msg);
@@ -1287,9 +1439,6 @@ s32 gcore_spi_read(u8 *buffer, s32 len)
 	}
 
 	memcpy(buffer, transfer.rx_buf, len);
-
-	kfree(transfer.rx_buf);
-	kfree(transfer.tx_buf);
 
 	return 0;
 }
@@ -1300,7 +1449,7 @@ s32 gcore_spi_write(const u8 *buffer, s32 len)
 	struct spi_message msg;
 	int ret = 0;
 
-#ifdef CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM
+#ifdef CONFIG_MTK_LEGACY_PLATFORM
 	/* MTK spi.c if transfer > 1024 bytes, the lens must be a multiple of 1024  */
 	if ((len > 1024) && (len % 1024)) {
 		GTP_ERROR("mtk spi tansfer len must be a multiple of 1024!");
@@ -1323,9 +1472,6 @@ s32 gcore_spi_write(const u8 *buffer, s32 len)
 		GTP_ERROR("spi message transfer error!");
 	}
 
-	kfree(transfer.rx_buf);
-	kfree(transfer.tx_buf);
-
 	return 0;
 }
 
@@ -1339,7 +1485,7 @@ s32 gcore_spi_write_then_read(u8 *txbuf, s32 n_tx, u8 *rxbuf, s32 n_rx)
 	int total = n_tx + n_rx + SPI_DUMMY;
 
 	spi_message_init(&msg);
-	gcore_spi_setup_xfer(&transfer, total);
+	ret = gcore_spi_setup_xfer(&transfer, total);
 	if (ret) {
 		GTP_ERROR("gcore spi setup xfer fail!");
 		return -EPERM;
@@ -1354,9 +1500,6 @@ s32 gcore_spi_write_then_read(u8 *txbuf, s32 n_tx, u8 *rxbuf, s32 n_rx)
 	}
 
 	memcpy(rxbuf, transfer.rx_buf + n_tx + SPI_DUMMY, n_rx);
-
-	kfree(transfer.rx_buf);
-	kfree(transfer.tx_buf);
 
 	return 0;
 }
@@ -1383,11 +1526,10 @@ void gcore_spi_config(void)
 #endif
 #endif
 
-	gcore_spi_slave->mode = gcore_spi_mode;
+	gcore_spi_slave->mode = SPI_MODE_0;
 	gcore_spi_slave->bits_per_word = 8;
-	gcore_spi_slave->max_speed_hz = gcore_spi_speed;
-	/* chip_select became a multi-CS array in 6.12; the DT reg=0 wiring
-	 * already selects the line, so leave the core to set it. */
+	gcore_spi_slave->max_speed_hz = 6000000;
+	gcore_spi_slave->chip_select = 0;
 	spi_setup(gcore_spi_slave);
 
 }
@@ -1396,27 +1538,21 @@ static s32 gcore_spi_probe(struct spi_device *slave)
 {
 	struct gcore_dev *touch_dev = NULL;
 
-	GTP_DEBUG("tpd_spi_probe start mode=%d speed=%u", gcore_spi_mode, gcore_spi_speed);
+	GTP_DEBUG("tpd_spi_probe start.");
 
 	gcore_spi_slave = slave;
 	gcore_spi_config();
 
-	if (gcore_mux_sel >= 0)
-		gcore_apply_mux_sel(gcore_mux_sel);
-
 	/* GC7371 use rst pin and need init before use */
 #ifndef CONFIG_ENABLE_CHIP_TYPE_GC7371
-	/* The GC7202 idm register read returns 0000 on this hardware even in
-	 * the working state (verified identical on the stock system), so a
-	 * chip-id miss is not fatal: log and continue - the touch data path
-	 * uses the normal register commands, not the idm window. */
 	if (gcore_probe_device()) {
-		GTP_ERROR("gcore probe device fail - continuing (idm read is gated on this hw)");
+		GTP_ERROR("gcore probe device fail!");
+		return -EPERM;
 	}
 #endif
 
 	touch_dev = kzalloc(sizeof(struct gcore_dev), GFP_KERNEL);
-	if (!touch_dev) {
+	if (IS_ERR_OR_NULL(touch_dev)) {
 		GTP_ERROR("allocate touch_dev mem fail!");
 		return -ENOMEM;
 	}
@@ -1429,25 +1565,35 @@ static s32 gcore_spi_probe(struct spi_device *slave)
 		GTP_ERROR("touch registration fail!");
 		return -EPERM;
 	}
-
-	/* The i2c probe path registers the fw class (which resolves the
-	 * firmware file name) but the vendor spi path never did - on the
-	 * stock system LK downloads the PRAM firmware before the kernel,
-	 * so nothing needed it. Our boot chain relies on the kernel-side
-	 * HOSTDOWNLOAD, which requests the bin by name. */
 	gcore_register_fw_class();
 	tpd_cdev->TP_have_registered = true;
-	tpd_cdev->tp_chip_id = TS_CHIP_GCORE;
-
 	return 0;
 }
 
-static void gcore_spi_remove(struct spi_device *slave)
+static int gcore_spi_remove(struct spi_device *slave)
 {
 	struct gcore_dev *gdev = spi_get_drvdata(slave);
 
+	GTP_INFO("%s enter\n", __func__);
 	gcore_deinit(gdev);
+	GTP_INFO("%s exit\n", __func__);
+	return 0;
 }
+
+#if 0
+#ifdef CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM
+#ifdef CONFIG_MTK_LEGACY_PLATFORM
+static struct spi_board_info spi_board_devs[] __initdata = {
+	[0] = {
+	       .modalias = GTP_DRIVER_NAME,
+	       .bus_num = 1,
+	       .chip_select = 1,
+	       .mode = SPI_MODE_3,
+	       },
+};
+#endif
+#endif
+#endif
 
 static struct spi_device_id tpd_spi_id = { GTP_DRIVER_NAME, 0 };
 
@@ -1473,6 +1619,7 @@ s32 gcore_bus_read(u8 *buffer, s32 len)
 #endif
 
 }
+
 EXPORT_SYMBOL(gcore_bus_read);
 
 s32 gcore_bus_write(const u8 *buffer, s32 len)
@@ -1484,24 +1631,23 @@ s32 gcore_bus_write(const u8 *buffer, s32 len)
 #endif
 
 }
+
 EXPORT_SYMBOL(gcore_bus_write);
 
 int gcore_touch_bus_init(void)
 {
 	GTP_DEBUG("touch_bus_init start.");
-	if (get_tp_chip_id() == 0) {
-		if ((tpd_cdev->tp_chip_id != TS_CHIP_MAX) && (tpd_cdev->tp_chip_id != TS_CHIP_GCORE)) {
-			GTP_ERROR("this tp is not used,return.\n");
-			return -EPERM;
-		}
-	}
-	if (tpd_cdev->TP_have_registered) {
-		GTP_ERROR("TP have registered by other TP.\n");
-		return -EPERM;
-	}
 #if defined(CONFIG_TOUCH_DRIVER_INTERFACE_I2C)
 	return i2c_add_driver(&tpd_i2c_driver);
 #elif defined(CONFIG_TOUCH_DRIVER_INTERFACE_SPI)
+
+#if 0
+#ifdef CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM
+#ifdef CONFIG_MTK_LEGACY_PLATFORM
+	spi_register_board_info(spi_board_devs, ARRAY_SIZE(spi_board_devs));
+#endif
+#endif
+#endif
 
 	return spi_register_driver(&tpd_spi_driver);
 #endif
@@ -1510,6 +1656,7 @@ int gcore_touch_bus_init(void)
 
 void gcore_touch_bus_exit(void)
 {
+	GTP_INFO("gcore touch bus exit.");
 #if defined(CONFIG_TOUCH_DRIVER_INTERFACE_I2C)
 	i2c_del_driver(&tpd_i2c_driver);
 #elif defined(CONFIG_TOUCH_DRIVER_INTERFACE_SPI)

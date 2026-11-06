@@ -21,13 +21,20 @@
 
 /* App */
 struct reg_msg {
+	u8 page;
 	u32 addr;
 	int length;
 	u8 buffer[50];
 };
 
+struct mode_inf {
+ u8 mode;
+ int packet_len;
+};
+
+
 #define GALAXYCORE_MAGIC_NUMBER 'G'
-#define GALAXYCORE_MAX_NR 12
+#define GALAXYCORE_MAX_NR 13
 #define IOC_APP_READ_FW_VERSION       _IOR(GALAXYCORE_MAGIC_NUMBER, 0, char)
 #define IOC_APP_UPDATE_FW             _IOW(GALAXYCORE_MAGIC_NUMBER, 1, char)
 #define IOC_APP_DEMO                  _IO(GALAXYCORE_MAGIC_NUMBER, 2)
@@ -36,11 +43,18 @@ struct reg_msg {
 #define IOC_APP_WRITE_REG             _IOW(GALAXYCORE_MAGIC_NUMBER, 5, struct reg_msg)
 #define IOC_APP_GET_RAWDATA_RES       _IOR(GALAXYCORE_MAGIC_NUMBER, 6, char)
 #define IOC_APP_START_MP_TEST		  _IO(GALAXYCORE_MAGIC_NUMBER, 7)
+#define IOC_APP_SWITCH_MODE           _IOW(GALAXYCORE_MAGIC_NUMBER, 8, struct mode_inf)
 
 /* Tool */
-#define IOC_DEBUG_TIME_RST0           _IO(GALAXYCORE_MAGIC_NUMBER, 8)
-#define IOC_DEBUG_TIME_RST1           _IO(GALAXYCORE_MAGIC_NUMBER, 9)
-#define IOC_TOOL_MODE                 _IOW(GALAXYCORE_MAGIC_NUMBER, 10, int)
-#define IOC_TOOL_IDM_OPERATION        _IOW(GALAXYCORE_MAGIC_NUMBER, 11, int)
+#define IOC_DEBUG_TIME_RST0           _IO(GALAXYCORE_MAGIC_NUMBER, 9)
+#define IOC_DEBUG_TIME_RST1           _IO(GALAXYCORE_MAGIC_NUMBER, 10)
+#define IOC_TOOL_MODE                 _IOW(GALAXYCORE_MAGIC_NUMBER, 11, int)
+#define IOC_TOOL_IDM_OPERATION        _IOW(GALAXYCORE_MAGIC_NUMBER, 12, int)
 
-#endif /*  _GCORE_IOCTL_H_  */
+
+#endif      /*  _GCORE_IOCTL_H_  */
+
+
+
+
+

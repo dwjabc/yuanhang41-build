@@ -18,75 +18,8 @@
 
 #include "gcore_drv_common.h"
 
-#ifdef CONFIG_DRM_MSM
+#ifdef CONFIG_DRM_PANEL_NOTIFIER
 #include <drm/drm_panel.h>
-#elif defined(CONFIG_FB)
-/* the legacy fbdev blank notifier was removed upstream (6.9); this
- * build keeps the panel always on, so no blank coordination. */
-#endif
-extern void gcore_ex_mode_recovery(void);
-/*extern int gcore_idm_enter_gesture_mode(void); */
-
-#if defined(CONFIG_ENABLE_GESTURE_WAKEUP) && defined(CONFIG_GESTURE_SPECIAL_INT)
-
-int gcore_enable_irq_wake(struct gcore_dev *gdev)
-{
-	GTP_DEBUG("enable irq wake");
-
-	if (gdev->ges_irq) {
-		enable_irq_wake(gdev->ges_irq);
-		return 0;
-	}
-
-	return -EPERM;
-}
-EXPORT_SYMBOL(gcore_enable_irq_wake);
-
-void gcore_ges_irq_enable(struct gcore_dev *gdev)
-{
-	unsigned long flags;
-
-	GTP_DEBUG("enable ges irq");
-
-	spin_lock_irqsave(&gdev->irq_flag_lock, flags);
-
-	if (gdev->ges_irq_en == false) {
-		gdev->ges_irq_en = true;
-		spin_unlock_irqrestore(&gdev->irq_flag_lock, flags);
-		enable_irq(gdev->ges_irq);
-	} else if (gdev->ges_irq_en == true) {
-		spin_unlock_irqrestore(&gdev->irq_flag_lock, flags);
-		GTP_ERROR("gesture Eint already enabled!");
-	} else {
-		spin_unlock_irqrestore(&gdev->irq_flag_lock, flags);
-		GTP_ERROR("Invalid irq_flag %d!", gdev->irq_flag);
-	}
-	/*GTP_DEBUG("Enable irq_flag=%d",g_touch.irq_flag); */
-
-}
-
-void gcore_ges_irq_disable(struct gcore_dev *gdev)
-{
-	unsigned long flags;
-
-	GTP_DEBUG("disable ges irq");
-
-	spin_lock_irqsave(&gdev->irq_flag_lock, flags);
-
-	if (gdev->ges_irq_en == false) {
-		spin_unlock_irqrestore(&gdev->irq_flag_lock, flags);
-		GTP_ERROR("gesture Eint already disable!");
-		return;
-	}
-
-	gdev->ges_irq_en = false;
-
-	spin_unlock_irqrestore(&gdev->irq_flag_lock, flags);
-
-	disable_irq_nosync(gdev->ges_irq);
-}
-EXPORT_SYMBOL(gcore_ges_irq_disable);
-
 #endif
 
 void gcore_suspend(void)
@@ -97,25 +30,36 @@ void gcore_suspend(void)
 		GTP_INFO("tp  already in suspend, return");
 		return;
 	}
-	GTP_INFO("enter gcore suspend");
-#ifdef GCORE_WDT_RECOVERY_ENABLE
-	gdev->ts_stat = 1;
+	GTP_DEBUG("enter gcore suspend");
+
+#if GCORE_WDT_RECOVERY_ENABLE
 	cancel_delayed_work_sync(&fn_data.gdev->wdt_work);
 #endif
+#ifdef CONFIG_TOUCHSCREEN_POINT_REPORT_CHECK
+	cancel_delayed_work_sync(&tpd_cdev->point_report_check_work);
+#endif
+	cancel_delayed_work_sync(&fn_data.gdev->fwu_work);
+	cancel_delayed_work_sync(&tpd_cdev->send_cmd_work);
 
-#if defined(CONFIG_ENABLE_GESTURE_WAKEUP)
-	if (fn_data.gdev->gesture_wakeup_en) {
+#ifdef CONFIG_ENABLE_GESTURE_WAKEUP
+	if (gdev->gesture_wakeup_en) {
 		/* gcore_idm_enter_gesture_mode(); */
 		gcore_fw_event_notify(FW_GESTURE_ENABLE);
 		enable_irq_wake(gdev->touch_irq);
 		msleep(20);
+		gdev->ts_stat = TS_SUSPEND;
+		gcore_touch_release_all_point(fn_data.gdev->input_device);
 		gdev->tp_suspend = true;
 		return;
 	}
 #endif
+
+	fn_data.gdev->ts_stat = TS_SUSPEND;
+	gcore_touch_release_all_point(fn_data.gdev->input_device);
 	gdev->irq_disable(gdev);
 	gdev->tp_suspend = true;
-	msleep(20);
+	GTP_DEBUG("gcore suspend end");
+
 }
 
 void gcore_resume(void)
@@ -126,9 +70,8 @@ void gcore_resume(void)
 		GTP_INFO("tp  already resume, return");
 		return;
 	}
-	GTP_INFO("enter gcore resume");
-
-#if defined(CONFIG_ENABLE_GESTURE_WAKEUP)
+	GTP_DEBUG("enter gcore resume");
+#ifdef CONFIG_ENABLE_GESTURE_WAKEUP
 	if (gdev->gesture_wakeup_en) {
 		GTP_INFO("disable irq wake");
 		disable_irq_wake(gdev->touch_irq);
@@ -140,21 +83,18 @@ void gcore_resume(void)
 	gdev->irq_enable(gdev);
 #endif
 #ifdef CONFIG_GCORE_AUTO_UPDATE_FW_HOSTDOWNLOAD
-	queue_delayed_work(gdev->fwu_workqueue, &gdev->fwu_work, msecs_to_jiffies(100));
+	gcore_request_firmware_update_work(NULL);
+#else
+	gcore_touch_release_all_point(fn_data.gdev->input_device);
 #endif
-#ifdef GCORE_WDT_RECOVERY_ENABLE
-	gdev->ts_stat = 0;
-#endif
-	gcore_touch_release_all_point(gdev->input_device);
-	gcore_ex_mode_recovery();
+
+	queue_delayed_work(tpd_cdev->tpd_wq, &tpd_cdev->send_cmd_work, msecs_to_jiffies(300));
+	gdev->ts_stat = TS_NORMAL;
 	gdev->tp_suspend = false;
-	if (mutex_is_locked(&gdev->transfer_lock)) {
-		mutex_unlock(&gdev->transfer_lock);
-		GTP_DEBUG("touch is locked, resume unlock");
-	}
+	GTP_DEBUG("gcore resume end");
 }
 
-#ifdef CONFIG_DRM_MSM
+#ifdef CONFIG_DRM_PANEL_NOTIFIER
 int gcore_ts_drm_notifier_callback(struct notifier_block *self, unsigned long event, void *data)
 {
 	unsigned int blank;
@@ -191,18 +131,22 @@ int gcore_ts_drm_notifier_callback(struct notifier_block *self, unsigned long ev
 	}
 	return 0;
 }
-#elif defined(CONFIG_FB)
-/* blank coordination removed with the fbdev notifier */
-int gcore_ts_fb_notifier_callback(struct notifier_block *self, unsigned long event, void *data)
-{
-	return 0;
-}
 #endif
 
 int gcore_touch_driver_init(void)
 {
 	GTP_DEBUG("touch driver init.");
 
+	if (get_tp_chip_id() == 0) {
+		if ((tpd_cdev->tp_chip_id != TS_CHIP_MAX) && (tpd_cdev->tp_chip_id != TS_CHIP_GCORE)) {
+			GTP_ERROR("this tp is not used,return.\n");
+			return -EPERM;
+		}
+	}
+	if (tpd_cdev->TP_have_registered) {
+		GTP_ERROR("TP have registered by other TP.\n");
+		return -EPERM;
+	}
 	if (gcore_touch_bus_init()) {
 		GTP_ERROR("bus init fail!");
 		return -EPERM;

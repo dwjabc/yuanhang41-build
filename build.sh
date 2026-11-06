@@ -91,12 +91,14 @@ rootfs)
     echo "sif /www/luci-static/resources/view/mu300/home.js uid 0" >> "$CMDS"
     echo "sif /www/luci-static/resources/view/mu300/home.js gid 0" >> "$CMDS"
     echo "sif /www/luci-static/resources/view/mu300/home.js mode 0100644" >> "$CMDS"
-    # GC7202 touch: ship NO firmware bin. The chip's own flash already
-    # carries the shipping firmware (6.17.5.13, same family as the vendor
-    # bin) and running it directly is the only mode that senses touches:
-    # a PRAM hostdownload leaves the touch engine dead and wedges the
-    # chip against further downloads. request_firmware failing cleanly
-    # at boot is the desired behavior.
+    # GC7202H touch (gcore_ts_v3, 0-flash): the chip has no usable flash
+    # firmware, so the driver hostdownloads the PRAM image at every boot.
+    # Ship the same OTA bin Android's kernel loads (6.17.5.13, verified
+    # byte-for-byte in the Android dmesg download flow).
+    echo "write $TOP/overlay/gcore_firmware_skyworth.bin /lib/firmware/gcore_firmware_skyworth.bin" >> "$CMDS"
+    echo "sif /lib/firmware/gcore_firmware_skyworth.bin uid 0" >> "$CMDS"
+    echo "sif /lib/firmware/gcore_firmware_skyworth.bin gid 0" >> "$CMDS"
+    echo "sif /lib/firmware/gcore_firmware_skyworth.bin mode 0100644" >> "$CMDS"
     debugfs -w -f "$CMDS" "$IMG" > "$N/fs-log1" 2>&1
     ! grep -iE 'error|not found|cannot|failed' "$N/fs-log1" || { cat "$N/fs-log1"; exit 1; }
 

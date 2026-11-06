@@ -21,13 +21,26 @@
 
 #define FW_BIN_NAME gcore_firmware_name
 
+#define STARTUP_UPDATE_DELAY_MS  1000	/* ms */
+
 struct gcore_dev *gdev_fwu = NULL;
 struct task_struct *fwu_thread = NULL;
+u8 g_ret_update;
 
 extern char gcore_firmware_name[];
-extern char gcore_mp_firmware_name[];
 extern int gcore_vendor_id;
-DECLARE_COMPLETION(gcore_fw_update_complete);
+extern struct ts_firmware *gcore_adb_upgrade_firmware;
+
+
+DECLARE_COMPLETION(fw_update_complete);
+
+bool demolog_enable;
+int hostdownload_idm;
+
+/* tian add */
+/* enum fw_event_type event_retry; */
+u8 notify_byte;
+
 
 static int gcore_fw_update_fn_init(struct gcore_dev *gdev);
 static void gcore_fw_update_fn_remove(struct gcore_dev *gdev);
@@ -50,6 +63,10 @@ struct gcore_exp_fn fw_update_fn = {
 #define FW_OP_BIN_NAME "GC7202_Flash_Op.bin"
 #elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
 #define FW_OP_BIN_NAME "GC7372_Flash_Op.bin"
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
+#define FW_OP_BIN_NAME "GC7302_Flash_Op.bin"
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
+#define FW_OP_BIN_NAME "GC7202H_Flash_Op.bin"
 #endif
 
 enum FLASH_OP {
@@ -92,9 +109,9 @@ struct fw_update_info update_info = {
 #define GC7XXX_MAX_TRANSFER_DATA      (GC7XXX_REQUEST_SIZE - 8)
 
 #define FLASH_OP_TRANSFER_SIZE        1024
-#endif
 
-#define FW_VERSION_ADDR               0xFFF4
+
+#endif
 
 #ifdef CONFIG_TOUCH_DRIVER_RUN_ON_RK_PLATFORM
 extern int dsi_send_packet(unsigned int id, unsigned char *packet, u32 n);
@@ -105,28 +122,42 @@ int gcore_send_mipi_reset(void)
 {
 #if defined(CONFIG_TOUCH_DRIVER_RUN_ON_RK_PLATFORM)
 	/* this is a example for reference */
-	u8 cmd1[] = {0xFF, 0x55, 0xAA, 0x66};
-	u8 cmd2[] = {0xFF, 0x26};
-	u8 cmd3[] = {0x04, 0x01};
+	u8 cmd1[] = { 0xFF, 0x55, 0xAA, 0x66 };
+	u8 cmd2[] = { 0xFF, 0x26 };
+	u8 cmd3[] = { 0x04, 0x01 };
 
 	send_mipi(cmd1);
 
 	usleep_range(10000, 11000);
 
 	send_mipi(cmd2);
+
 	usleep_range(10000, 11000);
 
 	send_mipi(cmd3);
 
 	usleep_range(10000, 11000);
 #elif defined(CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM)
-	/* TODO: no complete */
+	/* TODO: send mipi cmd */
 	usleep_range(10000, 11000);
 #elif defined(CONFIG_TOUCH_DRIVER_RUN_ON_SPRD_PLATFORM)
-	/* TODO: no complete */
+	u8 cmd1[] = { 0xFF, 0x55, 0xAA, 0x66 };
+	u8 cmd2[] = { 0xFF, 0x26 };
+	u8 cmd3[] = { 0x04, 0x01 };
+
+	mipi_dsi_gen_write(cmd1);
+
+	usleep_range(10000, 11000);
+
+	mipi_dsi_gen_write(cmd2);
+
+	usleep_range(10000, 11000);
+
+	mipi_dsi_gen_write(cmd3);
+
 	usleep_range(10000, 11000);
 #elif defined(CONFIG_TOUCH_DRIVER_RUN_ON_QCOM_PLATFORM)
-	/* TODO: no complete */
+	/* TODO: send mipi cmd */
 	usleep_range(10000, 11000);
 #endif
 
@@ -135,7 +166,9 @@ int gcore_send_mipi_reset(void)
 #endif
 
 #if defined(CONFIG_ENABLE_CHIP_TYPE_GC7202) \
-	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
 #if defined(CONFIG_TOUCH_DRIVER_INTERFACE_SPI)
 u8 idm_key[] = {
 	0x4C, 0x70, 0xb8, 0x5c, 0x2e, 0x17, 0x0b, 0x05, 0x02, 0x81, 0xc0, 0x60,
@@ -163,10 +196,28 @@ void gcore_reset(void)
 	gdev_fwu->rst_output(gdev_fwu->rst_gpio, 0);
 	usleep_range(1000, 1100);
 	gdev_fwu->rst_output(gdev_fwu->rst_gpio, 1);
+	msleep(20);
 #ifdef CONFIG_VENDOR_ZTE_LOG_EXCEPTION
 	tpd_cdev->tp_reset_timer = jiffies;
 #endif
 }
+
+#ifdef CONFIG_ENABLE_CHIP_TYPE_GC7202
+static int Notify_fw_Enter_IDM_Mode(u8 mode)
+{
+	u8 cmd[] = { 0x40, 0xA0, 0x00, 0x00, 0x73, 0x71, 0x00, 0x00, mode };
+	int ret = 0;
+
+	ret = gcore_bus_write(cmd, sizeof(cmd));
+	if (ret) {
+		GTP_ERROR("IDM mode notify fw fail!");
+		return -EPERM;
+	}
+	GTP_DEBUG("Notify FW Enter IDM success:%d", mode);
+
+	return 0;
+}
+#endif
 
 /* do not support spi for GC7371 */
 int gcore_enter_idm_mode(void)
@@ -177,16 +228,34 @@ int gcore_enter_idm_mode(void)
 	u8 cmd[] = { 0x95, 0x27, 0x0F, 0xF0 };
 #elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202)
 #if defined(CONFIG_TOUCH_DRIVER_INTERFACE_SPI)
-	u8 cmd[] = {0x4C, 0x0F, 0xF0};
+	u8 cmd[] = { 0x4C, 0x0F, 0xF0 };
 #elif defined(CONFIG_TOUCH_DRIVER_INTERFACE_I2C)
-	u8 cmd[] = {0x0F, 0xF0};
+	u8 cmd[] = { 0x0F, 0xF0 };
 #endif
 #elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
 #if defined(CONFIG_TOUCH_DRIVER_INTERFACE_SPI)
-	u8 cmd[] = {0x4C, 0x0F, 0xF0};
+	u8 cmd[] = { 0x4C, 0x0F, 0xF0 };
 #elif defined(CONFIG_TOUCH_DRIVER_INTERFACE_I2C)
-	u8 cmd[] = {0x0F, 0xF0};
+	u8 cmd[] = { 0x0F, 0xF0 };
 #endif
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
+#if defined(CONFIG_TOUCH_DRIVER_INTERFACE_SPI)
+	u8 cmd[] = { 0x4C, 0x0F, 0xF0 };
+#elif defined(CONFIG_TOUCH_DRIVER_INTERFACE_I2C)
+	u8 cmd[] = { 0x0F, 0xF0 };
+#endif
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
+#if defined(CONFIG_TOUCH_DRIVER_INTERFACE_SPI)
+	u8 cmd[] = { 0x4C, 0x0F, 0xF0 };
+#elif defined(CONFIG_TOUCH_DRIVER_INTERFACE_I2C)
+	u8 cmd[] = { 0x0F, 0xF0 };
+#endif
+#endif
+
+#ifdef CONFIG_ENABLE_CHIP_TYPE_GC7202
+	Notify_fw_Enter_IDM_Mode(0x2c);
+
+	usleep_range(1000, 1100);
 #endif
 
 #if defined(CONFIG_ENABLE_CHIP_TYPE_GC7371)
@@ -194,11 +263,14 @@ int gcore_enter_idm_mode(void)
 #elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7271)
 	gcore_send_mipi_reset();
 #elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202) \
-	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
 	if (gcore_bus_write(idm_key, sizeof(idm_key))) {
 		GTP_ERROR("gc7202 write idm key fail");
 	}
 #endif
+	usleep_range(1000, 1100);
 
 	return gcore_bus_write(cmd, sizeof(cmd));
 
@@ -208,7 +280,6 @@ int gcore_exit_idm_mode(void)
 {
 #if defined(CONFIG_ENABLE_CHIP_TYPE_GC7371)
 	u8 cmd[] = { 0x95, 0x27, 0x0A, 0xF5 };
-
 	return gcore_bus_write(cmd, sizeof(cmd));
 #elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7271)
 	u8 cmd1[] = { 0x95, 0x27, 0x05, 0xFA, 0xD0, 0x00, 0xFF, 0x00, 0x55, 0xAA, 0x66 };
@@ -242,11 +313,13 @@ write_fail:
 	return -EPERM;
 
 #elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202) \
-	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
 #if defined(CONFIG_TOUCH_DRIVER_INTERFACE_SPI)
-	u8 cmd[] = {0x4C, 0x0A, 0xF5};
+	u8 cmd[] = { 0x4C, 0x0A, 0xF5 };
 #elif defined(CONFIG_TOUCH_DRIVER_INTERFACE_I2C)
-	u8 cmd[] = {0x0A, 0xF5};
+	u8 cmd[] = { 0x0A, 0xF5 };
 #endif
 	return gcore_bus_write(cmd, sizeof(cmd));
 #endif
@@ -258,7 +331,9 @@ s32 gcore_idm_write_reg(u32 addr, u8 *buffer, s32 len)
 	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7271)
 	u8 cmd[] = { 0x95, 0x27, 0x05, 0xFA };
 #elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202) \
-	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
 #if defined(CONFIG_TOUCH_DRIVER_INTERFACE_SPI)
 	u8 cmd[] = { 0x4C, 0x05, 0xFA };
 #elif defined(CONFIG_TOUCH_DRIVER_INTERFACE_I2C)
@@ -273,7 +348,7 @@ s32 gcore_idm_write_reg(u32 addr, u8 *buffer, s32 len)
 	len_send = sizeof(cmd) + sizeof(addr) + len;
 
 	buffer_send = kzalloc(len_send, GFP_KERNEL);
-	if (buffer_send == NULL) {
+	if (IS_ERR_OR_NULL(buffer_send)) {
 		GTP_ERROR("buffer send allocate fail!");
 		return -ENOMEM;
 	}
@@ -304,7 +379,9 @@ s32 gcore_idm_read_reg(u32 addr, u8 *buffer, s32 len)
 		|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7271)
 	u8 cmd[8] = { 0x95, 0x27, 0x04, 0xFB, 0x00, 0x00, 0x00, 0x00 };
 #elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202) \
-	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
 #if defined(CONFIG_TOUCH_DRIVER_INTERFACE_SPI)
 	u8 cmd[] = { 0x4C, 0x04, 0xFB, 0x00, 0x00, 0x00, 0x00 };
 #elif defined(CONFIG_TOUCH_DRIVER_INTERFACE_I2C)
@@ -333,7 +410,7 @@ s32 gcore_idm_read_reg(u32 addr, u8 *buffer, s32 len)
 	}
 
 	/* no sleep. delay precise 1 ms */
-	mdelay(1);
+	usleep_range(1000, 1100);
 
 	ret = gcore_bus_read(buffer, len);
 	if (ret) {
@@ -351,6 +428,107 @@ s32 gcore_idm_read_reg(u32 addr, u8 *buffer, s32 len)
 	return 0;
 }
 
+s32 gcore_idm_write_page_reg(u8 page, u32 addr, u8 *buffer, s32 len)
+{
+	u8 cmd1[] = { 0x55, 0xAA, 0x66 };
+	u8 lock = 0x00;
+
+#if defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H) \
+			|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
+	u8 ckucr0[4] = { 0 };
+#endif
+
+#if defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H) \
+			|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
+	gcore_idm_read_reg(0xC0000000 + (0x25 << 2), ckucr0, sizeof(ckucr0));
+	GTP_DEBUG("reg ckucr0:%x %x %x %x", ckucr0[0], ckucr0[1], ckucr0[2], ckucr0[3]);
+
+	usleep_range(3000, 3100);
+
+	if ((page == 0x26) || (page == 0x27)) {
+		GTP_DEBUG("reading tp page");
+		ckucr0[2] |= 0x80;
+	} else {
+		ckucr0[2] &= 0x7F;
+	}
+
+	gcore_idm_write_reg(0xC0000000 + (0x25 << 2) + 2, &ckucr0[2], 1);
+
+	usleep_range(3000, 3100);
+#endif
+
+	gcore_idm_write_reg(0xD000FF00, cmd1, sizeof(cmd1));
+
+	usleep_range(3000, 3100);
+
+	/* unlock page */
+	gcore_idm_write_reg(0xD000FF00, &page, 1);
+
+	usleep_range(3000, 3100);
+
+	gcore_idm_write_reg(addr, buffer, len);
+
+	usleep_range(3000, 3100);
+
+	/* lock page */
+	gcore_idm_write_reg(0xD000FF00, &lock, 1);
+
+	usleep_range(3000, 3100);
+
+
+	return 0;
+}
+
+s32 gcore_idm_read_page_reg(u8 page, u32 addr, u8 *buffer, s32 len)
+{
+	u8 cmd1[] = { 0x55, 0xAA, 0x66 };
+	u8 lock = 0x00;
+
+#if defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H) \
+			|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
+	u8 ckucr0[4] = { 0 };
+#endif
+
+#if defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H) \
+			|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
+	gcore_idm_read_reg(0xC0000000 + (0x25 << 2), ckucr0, sizeof(ckucr0));
+	GTP_DEBUG("reg ckucr0:%x %x %x %x", ckucr0[0], ckucr0[1], ckucr0[2], ckucr0[3]);
+
+	usleep_range(3000, 3100);
+
+	if ((page == 0x26) || (page == 0x27)) {
+		GTP_DEBUG("reading tp page");
+		ckucr0[2] |= 0x80;
+	} else {
+		ckucr0[2] &= 0x7F;
+	}
+	gcore_idm_write_reg(0xC0000000 + (0x25 << 2) + 2, &ckucr0[2], 1);
+
+	usleep_range(3000, 3100);
+#endif
+
+	gcore_idm_write_reg(0xD000FF00, cmd1, sizeof(cmd1));
+
+	usleep_range(3000, 3100);
+
+	/* unlock page */
+	gcore_idm_write_reg(0xD000FF00, &page, 1);
+
+	usleep_range(3000, 3100);
+
+	gcore_idm_read_reg(addr, buffer, len);
+
+	usleep_range(3000, 3100);
+
+	/* lock page */
+	gcore_idm_write_reg(0xD000FF00, &lock, 1);
+
+	usleep_range(3000, 3100);
+
+
+	return 0;
+}
+
 s32 gcore_fw_write_reg(u32 addr, u8 *buffer, s32 len)
 {
 	u8 cmd[] = { 0x80, 0xB0 };
@@ -362,7 +540,7 @@ s32 gcore_fw_write_reg(u32 addr, u8 *buffer, s32 len)
 	len_send = sizeof(cmd) + sizeof(addr) + sizeof(len) + sizeof(rw_byte) + len;
 
 	buffer_send = kzalloc(len_send, GFP_KERNEL);
-	if (buffer_send == NULL) {
+	if (IS_ERR_OR_NULL(buffer_send)) {
 		GTP_ERROR("buffer send allocate fail!");
 		return -ENOMEM;
 	}
@@ -396,12 +574,12 @@ s32 gcore_fw_write_reg(u32 addr, u8 *buffer, s32 len)
 
 	return ret;
 }
+
 EXPORT_SYMBOL(gcore_fw_write_reg);
 
 s32 gcore_fw_read_reg(u32 addr, u8 *buffer, s32 len)
 {
 	u8 cmd[11] = { 0x80, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
-	u8 start_cmd[] = { 0x80, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
 	int ret = 0;
 
 	gdev_fwu->fw_event = FW_READ_REG;
@@ -421,21 +599,20 @@ s32 gcore_fw_read_reg(u32 addr, u8 *buffer, s32 len)
 	mutex_lock(&gdev_fwu->transfer_lock);
 
 	fw_update_fn.wait_int = true;
-	gcore_bus_write(start_cmd, sizeof(start_cmd));
-	usleep_range(1000, 1100);
+
 	ret = gcore_bus_write(cmd, sizeof(cmd));
 	if (ret) {
 		GTP_ERROR("idm read wr address fail!");
-		mutex_unlock(&gdev_fwu->transfer_lock);
 		return -EPERM;
 	}
 
 	mutex_unlock(&gdev_fwu->transfer_lock);
 
-	wait_for_completion_interruptible(&gcore_fw_update_complete);
+	wait_for_completion_interruptible(&fw_update_complete);
 
 	return 0;
 }
+
 EXPORT_SYMBOL(gcore_fw_read_reg);
 
 int gcore_fw_read_reg_reply(u8 *buf, int len)
@@ -454,73 +631,212 @@ int gcore_fw_read_reg_reply(u8 *buf, int len)
 	}
 
 	fw_update_fn.wait_int = false;
-	complete(&gcore_fw_update_complete);
+	complete(&fw_update_complete);
 
 	return 0;
 
 }
 
+u8 fw_event_cmd[] = { 0x80, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
 int gcore_fw_event_notify(enum fw_event_type event)
 {
-	u8 cmd[] = { 0x80, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-	u8 start_cmd[] = { 0x80, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-	u8 cmd_len = sizeof(cmd);
+	u8 cmd_len = sizeof(fw_event_cmd);
 	int ret = 0;
-	struct gcore_dev *gdev = fn_data.gdev;
+	int i = 0;
+	gdev_fwu->notify_state = true;
+	gdev_fwu->fw_event = event;
 
-	if (gdev->tp_fw_update || gdev->tp_self_test) {
-		GTP_DEBUG(" tp fw update or self test return.");
-		return 0;
+	if (!g_ret_update) {
+		GTP_DEBUG("fw update is running,wait 100ms");
+		msleep(100);
 	}
+
+	/* fix usb plugin cause mp test fail */
+	for (i = 0; i < 10; i++) {
+		if (gdev_fwu->ts_stat == TS_MPTEST) {
+			GTP_DEBUG("mp test running,wait %d", i);
+			msleep(500);
+		} else {
+			break;
+		}
+	}
+
+		switch (event) {
+		case FW_EDGE_0:
+			fw_event_cmd[10] = fw_event_cmd[10] & ~((0x00 | 0x01) << 0);
+			notify_byte = fw_event_cmd[10];
+			GTP_DEBUG("gcore fw event:edge 0");
+			break;
+
+		case FW_EDGE_90:
+			fw_event_cmd[10] = fw_event_cmd[10] | ((0x00 | 0x01) << 0);
+			notify_byte = fw_event_cmd[10];
+			GTP_DEBUG("gcore fw event:edge 90");
+			break;
+
+		case FW_CHARGER_PLUG:
+			fw_event_cmd[10] = fw_event_cmd[10] | ((0x00 | 0x01) << 1);
+			notify_byte = fw_event_cmd[10];
+			GTP_DEBUG("gcore fw event:charger plug");
+			break;
+
+		case FW_CHARGER_UNPLUG:
+			fw_event_cmd[10] = fw_event_cmd[10] & ~((0x00 | 0x01) << 1);
+			notify_byte = fw_event_cmd[10];
+			GTP_DEBUG("gcore fw event:charger unplug");
+
+			break;
+
+		case FW_HEADSET_PLUG:
+			fw_event_cmd[10] = fw_event_cmd[10] | ((0x00 | 0x01) << 2);
+			notify_byte = fw_event_cmd[10];
+			GTP_DEBUG("gcore fw event:headset plug");
+
+			break;
+
+		case FW_HEADSET_UNPLUG:
+			fw_event_cmd[10] = fw_event_cmd[10] & ~((0x00 | 0x01) << 2);
+			notify_byte = fw_event_cmd[10];
+			GTP_DEBUG("gcore fw event:headset unplug");
+			break;
+
+		case FW_GESTURE_ENABLE:
+			fw_event_cmd[10] = fw_event_cmd[10] & ~((0x00 | 0x01) << 3);
+			notify_byte = fw_event_cmd[10];
+			GTP_DEBUG("gcore fw event:gesture disable");
+			break;
+
+		case FW_GESTURE_DISABLE:
+			fw_event_cmd[10] = fw_event_cmd[10] | ((0x00 | 0x01) << 3);
+			notify_byte = fw_event_cmd[10];
+			GTP_DEBUG("gcore fw event:gesture enable");
+			break;
+
+		case FW_GLOVE_ENABLE:
+			fw_event_cmd[10] = fw_event_cmd[10] & ~((0x00 | 0x01) << 4);
+			notify_byte = fw_event_cmd[10];
+			GTP_DEBUG("gcore fw event:glove mode disable");
+			break;
+
+		case FW_GLOVE_DISABLE:
+			fw_event_cmd[10] = fw_event_cmd[10] | ((0x00 | 0x01) << 4);
+			notify_byte = fw_event_cmd[10];
+			GTP_DEBUG("gcore fw event:glove mode enable");
+			break;
+
+		case FW_REPORT_RATE_120:
+			fw_event_cmd[10] = fw_event_cmd[10] & ~((0x00 | 0x01) << 5);
+			notify_byte = fw_event_cmd[10];
+			GTP_DEBUG("gcore fw event:report rate switch 120 HZ");
+			break;
+
+		case FW_REPORT_RATE_180:
+			fw_event_cmd[10] = fw_event_cmd[10] | ((0x00 | 0x01) << 5);
+			notify_byte = fw_event_cmd[10];
+			GTP_DEBUG("gcore fw event:report rate switch 180 HZ");
+			break;
+
+		case FW_REPORT_HIGH_SENSITIVITY:
+			fw_event_cmd[10] = fw_event_cmd[10] & ~((0x00 | 0x01) << 6);
+			notify_byte = fw_event_cmd[10];
+			GTP_DEBUG("gcore fw event:high sensitivity");
+			break;
+
+		case FW_REPORT_NORMAL_SENSITIVITY:
+			fw_event_cmd[10] = fw_event_cmd[10] | ((0x00 | 0x01) << 6);
+			notify_byte = fw_event_cmd[10];
+			GTP_DEBUG("gcore fw event:normal sensitivity");
+			break;
+
+
+		case FW_RESUME:
+			notify_byte = fw_event_cmd[10];
+			GTP_DEBUG("gcore fw event:resume");
+			break;
+
+		default:
+			GTP_DEBUG("unknown fw event type.");
+			break;
+		}
+
+		mutex_lock(&gdev_fwu->transfer_lock);
+
+		ret = gcore_bus_write(fw_event_cmd, cmd_len);
+		if (ret) {
+			GTP_ERROR("gcore write fw event fail.");
+		}
+
+
+		mutex_unlock(&gdev_fwu->transfer_lock);
+		queue_delayed_work(gdev_fwu->fwu_workqueue, &gdev_fwu->event_work, \
+							msecs_to_jiffies(36));
+		GTP_DEBUG("fw event:[80B0 %x %x %x %x %x %x %x %x]", fw_event_cmd[3], fw_event_cmd[4], \
+													   fw_event_cmd[5], fw_event_cmd[6], \
+												       fw_event_cmd[7], fw_event_cmd[8], \
+												       fw_event_cmd[9],fw_event_cmd[10]);
+
+	return ret;
+
+}
+
+int gcore_fw_event_save(enum fw_event_type event)
+{
 	switch (event) {
 	case FW_EDGE_0:
-		cmd[cmd_len - 1] = 0x02;
-		GTP_DEBUG("gcore fw event:edge 0");
+		fw_event_cmd[10] = fw_event_cmd[10] & ~((0x00 | 0x01) << 0);
 		break;
 
 	case FW_EDGE_90:
-		cmd[cmd_len - 1] = 0x03;
-		GTP_DEBUG("gcore fw event:edge 90");
+		fw_event_cmd[10] = fw_event_cmd[10] | ((0x00 | 0x01) << 0);
 		break;
 
 	case FW_CHARGER_PLUG:
-		cmd[cmd_len - 1] = 0x04;
-		GTP_DEBUG("gcore fw event:charger plug");
+		fw_event_cmd[10] = fw_event_cmd[10] | ((0x00 | 0x01) << 1);
 		break;
 
 	case FW_CHARGER_UNPLUG:
-		cmd[cmd_len - 1] = 0x05;
-		GTP_DEBUG("gcore fw event:charger unplug");
+		fw_event_cmd[10] = fw_event_cmd[10] & ~((0x00 | 0x01) << 1);
 		break;
 
 	case FW_HEADSET_PLUG:
-		cmd[cmd_len - 1] = 0x06;
-		GTP_DEBUG("gcore fw event:headset plug");
+		fw_event_cmd[10] = fw_event_cmd[10] | ((0x00 | 0x01) << 2);
 		break;
 
 	case FW_HEADSET_UNPLUG:
-		cmd[cmd_len - 1] = 0x07;
-		GTP_DEBUG("gcore fw event:headset unplug");
+		fw_event_cmd[10] = fw_event_cmd[10] & ~((0x00 | 0x01) << 2);
 		break;
 
 	case FW_GESTURE_ENABLE:
-		cmd[cmd_len - 1] = 0x0a;
-		GTP_DEBUG("gcore fw event:gesture enable");
+		fw_event_cmd[10] = fw_event_cmd[10] & ~((0x00 | 0x01) << 3);
 		break;
 
 	case FW_GESTURE_DISABLE:
-		cmd[cmd_len - 1] = 0x0b;
-		GTP_DEBUG("gcore fw event:gesture disable");
+		fw_event_cmd[10] = fw_event_cmd[10] | ((0x00 | 0x01) << 3);
 		break;
 
-	case FW_REPORT_RATE_60:
-		cmd[cmd_len - 1] = 0x0e;
-		GTP_DEBUG("gcore fw event:report rate switch 60 HZ");
+	case FW_GLOVE_ENABLE:
+		fw_event_cmd[10] = fw_event_cmd[10] & ~((0x00 | 0x01) << 4);
 		break;
 
-	case FW_REPORT_RATE_90:
-		cmd[cmd_len - 1] = 0x0f;
-		GTP_DEBUG("gcore fw event:report rate switch 90 HZ");
+	case FW_GLOVE_DISABLE:
+		fw_event_cmd[10] = fw_event_cmd[10] | ((0x00 | 0x01) << 4);
+		break;
+
+	case FW_REPORT_RATE_120:
+		fw_event_cmd[10] = fw_event_cmd[10] & ~((0x00 | 0x01) << 5);
+		break;
+
+	case FW_REPORT_RATE_180:
+		fw_event_cmd[10] = fw_event_cmd[10] | ((0x00 | 0x01) << 5);
+		break;
+
+	case FW_REPORT_HIGH_SENSITIVITY:
+		fw_event_cmd[10] = fw_event_cmd[10] & ~((0x00 | 0x01) << 6);
+		break;
+
+	case FW_REPORT_NORMAL_SENSITIVITY:
+		fw_event_cmd[10] = fw_event_cmd[10] | ((0x00 | 0x01) << 6);
 		break;
 
 	default:
@@ -528,9 +844,116 @@ int gcore_fw_event_notify(enum fw_event_type event)
 		break;
 	}
 
+	return 0;
+
+}
+
+int check_notify_event(u8 rev_data,enum fw_event_type check_event)
+{
+	GTP_DEBUG("sent to fw:%d, receive from fw:%d",notify_byte,rev_data);
+	if(notify_byte == rev_data){
+		GTP_DEBUG("notify fw event success!");
+		return 1;
+	}else{
+		GTP_DEBUG("notify fw event fail!");
+		return 0;
+
+	}
+}
+
+int notify_contin;
+void gcore_fw_event_notify_work(struct work_struct *work)
+{
+	notify_contin++;
+	GTP_ERROR("notify :%d ,retry notify times :%d", gdev_fwu->fw_event, notify_contin);
+
+	if (gdev_fwu->notify_state) {
+		if (notify_contin < 3) {
+			gcore_fw_event_notify(gdev_fwu->fw_event);
+		} else {
+			GTP_DEBUG("fw failed to receive notification");
+			gdev_fwu->notify_state = false;
+			notify_contin = 0;
+		}
+	}
+}
+
+int gcore_fw_event_resume(void)
+{
+	u8 cmd_len = sizeof(fw_event_cmd);
+	int i = 0;
+	int sum = 0;
+
+	for (i = 2; i < cmd_len; i++) {
+		sum += fw_event_cmd[i];
+	}
+
+	if (sum) {
+		GTP_DEBUG("do resume fw event notify");
+		gcore_fw_event_notify(FW_RESUME);
+	} else {
+		GTP_DEBUG("no need to fw event notify");
+	}
+
+	return 0;
+}
+
+static u32 event,width,height;
+static u32 dead_zone_event=0,edge_event=0,corner_event=0;
+static u32 dead_zone_width=0,edge_width=0,corner_width=0,corner_height=0;
+static ssize_t gcore_fw_edge_protection_store(struct device *dev, struct device_attribute *attr,
+			       const char *buf, size_t count){
+	u8 cmd[] = { 0x80, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+	u8 cmd_len = sizeof(cmd);
+	int ret = 0;
+
+	GTP_DEBUG("str %s",buf);
+	if(sscanf(buf,"%d,%d,%d ",&event,&width,&height) == 3){
+		GTP_DEBUG("event is:%d,width is:%d,height is:%d", event, width, height);
+	}else{
+		GTP_DEBUG("fail event is:%d,width is:%d,height is:%d", event, width, height);
+	}
+
+	if (!g_ret_update) {
+		GTP_DEBUG("fw update is running,wait 100ms");
+		msleep(100);
+	}
+
+	switch (event){
+		case fw_dead_zone_event:
+			cmd[1] = 0xA0;
+			cmd[cmd_len - 1] = width;
+			dead_zone_event = 1;
+			dead_zone_width = width;
+			GTP_DEBUG("gcore fw edge event data:%d,%d,%d",cmd[1],cmd[cmd_len - 2],cmd[cmd_len - 1]);
+			break;
+
+		case fw_edge_event:
+			cmd[1] = 0xC0;
+			cmd[cmd_len - 1] = width;
+			edge_event = 1;
+			edge_width = width;
+			GTP_DEBUG("gcore fw edge event data:%d,%d,%d",cmd[1],cmd[cmd_len - 2],cmd[cmd_len - 1]);
+			break;
+
+		case fw_corner_event:
+			cmd[1] = 0xD0;
+			cmd[cmd_len - 2] = height;
+			cmd[cmd_len - 1] = width;
+			corner_event = 1;
+			corner_width = width;
+			corner_height = height;
+			GTP_DEBUG("gcore fw correr event data:%d,%d,%d",cmd[1],cmd[cmd_len - 2],cmd[cmd_len - 1]);
+			break;
+
+		default:
+			GTP_DEBUG("unknown fw edge event type.");
+			break;
+
+	}
+
 	mutex_lock(&gdev_fwu->transfer_lock);
-	gcore_bus_write(start_cmd, sizeof(start_cmd));
-	usleep_range(1000, 1100);
+
 	ret = gcore_bus_write(cmd, cmd_len);
 	if (ret) {
 		GTP_ERROR("gcore write fw event fail.");
@@ -538,16 +961,22 @@ int gcore_fw_event_notify(enum fw_event_type event)
 
 	mutex_unlock(&gdev_fwu->transfer_lock);
 
-	return ret;
+	return count;
+
 }
+
+static ssize_t gcore_fw_edge_protection_show(struct device *dev,
+			  	struct device_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "dead_zone_width=%d edge_width=%d corner_width=%d edge_height=%d\n", dead_zone_width, edge_width, corner_width, corner_height);
+}
+
 
 s32 gcore_fw_read_rawdata(u8 *buffer, s32 len)
 {
 	u8 cmd[11] = { 0x80, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08 };
-	u8 start_cmd[] = { 0x80, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08 };
 	int ret = 0;
 
-	GTP_INFO("enter.");
 	gdev_fwu->fw_event = FW_READ_RAWDATA;
 	gdev_fwu->firmware = buffer;
 	gdev_fwu->fw_xfer = len;
@@ -560,20 +989,17 @@ s32 gcore_fw_read_rawdata(u8 *buffer, s32 len)
 	mutex_lock(&gdev_fwu->transfer_lock);
 
 	fw_update_fn.wait_int = true;
-	gcore_bus_write(start_cmd, sizeof(start_cmd));
-	usleep_range(1000, 1100);
+
 	ret = gcore_bus_write(cmd, sizeof(cmd));
 	if (ret) {
 		GTP_ERROR("write fw event cmd fail!");
-		mutex_unlock(&gdev_fwu->transfer_lock);
 		return -EPERM;
 	}
 
 	mutex_unlock(&gdev_fwu->transfer_lock);
 
-	wait_for_completion_interruptible(&gcore_fw_update_complete);
+	wait_for_completion_interruptible(&fw_update_complete);
 
-	GTP_INFO("exit.");
 	return 0;
 }
 
@@ -594,7 +1020,7 @@ int gcore_fw_read_rawdata_reply(u8 *buf, int len)
 	}
 
 	fw_update_fn.wait_int = false;
-	complete(&gcore_fw_update_complete);
+	complete(&fw_update_complete);
 
 	return 0;
 
@@ -603,10 +1029,8 @@ int gcore_fw_read_rawdata_reply(u8 *buf, int len)
 s32 gcore_fw_read_diffdata(u8 *buffer, s32 len)
 {
 	u8 cmd[11] = { 0x80, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09 };
-	u8 start_cmd[] = { 0x80, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09 };
 	int ret = 0;
 
-	GTP_INFO("enter.");
 	gdev_fwu->fw_event = FW_READ_DIFFDATA;
 	gdev_fwu->firmware = buffer;
 	gdev_fwu->fw_xfer = len;
@@ -619,8 +1043,7 @@ s32 gcore_fw_read_diffdata(u8 *buffer, s32 len)
 	mutex_lock(&gdev_fwu->transfer_lock);
 
 	fw_update_fn.wait_int = true;
-	gcore_bus_write(start_cmd, sizeof(start_cmd));
-	usleep_range(1000, 1100);
+
 	ret = gcore_bus_write(cmd, sizeof(cmd));
 	if (ret) {
 		GTP_ERROR("write fw event cmd fail!");
@@ -630,9 +1053,8 @@ s32 gcore_fw_read_diffdata(u8 *buffer, s32 len)
 
 	mutex_unlock(&gdev_fwu->transfer_lock);
 
-	wait_for_completion_interruptible(&gcore_fw_update_complete);
+	wait_for_completion_interruptible(&fw_update_complete);
 
-	GTP_INFO("exit.");
 	return 0;
 }
 
@@ -653,7 +1075,7 @@ int gcore_fw_read_diffdata_reply(u8 *buf, int len)
 	}
 
 	fw_update_fn.wait_int = false;
-	complete(&gcore_fw_update_complete);
+	complete(&fw_update_complete);
 
 	return 0;
 
@@ -679,33 +1101,54 @@ int gcore_read_fw_version(u8 *version, int length)
 {
 #if defined(CONFIG_ENABLE_CHIP_TYPE_GC7271) \
 	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202) \
-	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
 #ifdef CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD
 	u32 upgrade_addr = 0xC0000000 + ((0x14 << 2) + 1);
-	u8 value = BIT5;	/* bit5 write 1 */
+	u8 value = BIT5;	/* bit5 write 1 SYS_RESET */
 #else
 	u32 upgrade_addr = 0xC0000000 + ((0x14 << 2) + 1);
-	u8 value = BIT5;	/* bit5 write 1 */
-#endif
+	u8 value = BIT5;	/* bit5 write 1 SYS_RESET */
 #endif
 
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H) \
+	  || defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
+	u32 upgrade_addr = 0xC0000000 + (0x14 << 2);
+	u8 value = BIT0;	/* bit0 write 1 CPU_REMAP */
+#endif
+
+
+	if(!(memcmp(gdev_fwu->fw_ver_in_bin,gdev_fwu->fw_ver_in_reg,4))){
+		GTP_DEBUG("FW version number is not changed");
+		memcpy(version,gdev_fwu->fw_ver_in_reg,4);
+		GTP_DEBUG("fw version:%x %x %x %x", version[0], version[1], version[2], version[3]);
+		return 0;
+	}
+
 	mutex_lock(&gdev_fwu->transfer_lock);
+
+	usleep_range(2000, 2100);
+
 	gcore_enter_idm_mode();
 
 	usleep_range(1000, 1100);
 
-#ifdef CONFIG_ENABLE_CHIP_TYPE_GC7372
+#if defined(CONFIG_ENABLE_CHIP_TYPE_GC7372) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
 	gcore_idm_read_reg(0x8002FFF4, version, length);
 #else
 	gcore_idm_read_reg(0x8001FFF4, version, length);
 #endif
 	GTP_DEBUG("fw version:%x %x %x %x", version[0], version[1], version[2], version[3]);
+	memcpy(gdev_fwu->fw_ver_in_reg,version,4);
 
 	usleep_range(1000, 1100);
 
 #if defined(CONFIG_ENABLE_CHIP_TYPE_GC7271) \
 	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202) \
-	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
 	if (gcore_idm_write_reg(upgrade_addr, &value, 1)) {
 		GTP_ERROR("write reg rkucr0 upgrade fail");
 	}
@@ -716,6 +1159,7 @@ int gcore_read_fw_version(u8 *version, int length)
 	gcore_exit_idm_mode();
 
 	mutex_unlock(&gdev_fwu->transfer_lock);
+
 	return 0;
 
 }
@@ -738,11 +1182,9 @@ int gcore_read_fw_version_retry(u8 *version, int length)
 		msleep(10);
 		GTP_ERROR("poweron fw ver discorrect retry:%d", retry);
 
-		/* NO soft reset here: on this 0-flash unit the running
-		 * firmware lives in PRAM and a reset drops it back to the
-		 * bootloader, killing touch until the next download. The
-		 * version-based vendor check never matches anyway (the fw
-		 * is 6.17.x while the table expects 3.x). */
+		gcore_sys_soft_reset();
+
+		msleep(10);
 
 		retry--;
 	}
@@ -755,21 +1197,28 @@ int gcore_read_ram_fw(u8 *buf, int length)
 {
 #if defined(CONFIG_ENABLE_CHIP_TYPE_GC7271) \
 	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202) \
-	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
 #ifdef CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD
 	u32 upgrade_addr = 0xC0000000 + ((0x14 << 2) + 1);
-	u8 value = BIT6;	/* bit6 write 1 */
+	u8 value = BIT5;	/* bit5 write 1 */
 #else
 	u32 upgrade_addr = 0xC0000000 + ((0x14 << 2) + 1);
 	u8 value = BIT5;	/* bit5 write 1 */
 #endif
+
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
+	u32 upgrade_addr = 0xC0000000 + (0x14 << 2);
+	u8 value = BIT0;	/* bit0 write 1 CPU_REMAP */
 #endif
 
 	gcore_enter_idm_mode();
 
 	usleep_range(1000, 1100);
 
-#ifdef CONFIG_ENABLE_CHIP_TYPE_GC7372
+#if defined(CONFIG_ENABLE_CHIP_TYPE_GC7372) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
 	gcore_idm_read_reg(0x80020000, buf, length);
 #else
 	gcore_idm_read_reg(0x80010000, buf, length);
@@ -780,7 +1229,9 @@ int gcore_read_ram_fw(u8 *buf, int length)
 
 #if defined(CONFIG_ENABLE_CHIP_TYPE_GC7271) \
 	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202) \
-	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
 	if (gcore_idm_write_reg(upgrade_addr, &value, 1)) {
 		GTP_ERROR("write reg rkucr0 upgrade fail");
 	}
@@ -800,6 +1251,11 @@ int gcore_dump_fw_to_file(void)
 {
 	u8 *fw_buf = NULL;
 	int xfer_len = FW_SIZE;
+#ifndef GKI_CHECK
+	struct file *file = NULL;
+	mm_segment_t old_fs;
+	loff_t pos = 0;
+#endif
 
 #ifdef CONFIG_TOUCH_DRIVER_INTERFACE_SPI
 #ifdef CONFIG_MTK_SPI_MULTUPLE_1024
@@ -808,7 +1264,9 @@ int gcore_dump_fw_to_file(void)
 		|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7271)
 	xfer_len = FW_SIZE + 1024 - 8 - 2;
 #elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202) \
-	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
 	xfer_len = FW_SIZE + 1024 - 7 - 2;
 #endif
 
@@ -819,20 +1277,30 @@ int gcore_dump_fw_to_file(void)
 #endif
 
 	fw_buf = kzalloc(xfer_len, GFP_KERNEL);
-	if (!fw_buf) {
+	if (IS_ERR_OR_NULL(fw_buf)) {
 		GTP_ERROR("fw buf mem allocate fail");
 		return -EPERM;
 	}
 
 	gcore_read_ram_fw(fw_buf, xfer_len);
-	if(tp_alloc_tp_firmware_data(50 * RT_DATA_LEN)) {
-		GTP_ERROR(" alloc tp firmware data fail");
-		return -ENOMEM;
+#ifndef GKI_CHECK
+	file = filp_open(DUMP_FW_FILE_NAME, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+	if (IS_ERR(file)) {
+		GTP_ERROR("Open file %s failed", DUMP_FW_FILE_NAME);
+		return -EPERM;
 	}
-	tpd_copy_to_tp_firmware_data(fw_buf);
-	tpd_reset_fw_data_pos_and_size();
-	kfree(fw_buf);
 
+	old_fs = get_fs();
+	set_fs(KERNEL_DS);
+	pos = 0;
+
+	vfs_write(file, fw_buf, FW_SIZE, &pos);
+
+	set_fs(old_fs);
+	filp_close(file, NULL);
+
+	kfree(fw_buf);
+#endif
 	return 0;
 }
 
@@ -846,8 +1314,12 @@ int gcore_idm_read_id(u8 *id, int length)
 	u8 syscr5[4] = { 0 };
 #endif
 #ifdef CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD
-	u32 upgrade_addr = 0xC0000000 + ((0x14 << 2) + 1);
-	u8 value = BIT5;	/* bit5 write 1 */
+	u32 upgrade_addr = 0xC0000000 + (0x14 << 2);
+	u8 value = BIT0;	/* bit0 write 1 CPU_REMAP */
+#endif
+#if defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
+	u8 ckucr0[4] = { 0 };
 #endif
 
 	gcore_enter_idm_mode();
@@ -859,7 +1331,7 @@ int gcore_idm_read_id(u8 *id, int length)
 	GTP_DEBUG("reg syssr0:%x %x %x %x", syssr0[0], syssr0[1], syssr0[2], syssr0[3]);
 	if (syssr0[1] & BIT7) {
 		GTP_DEBUG("dp_lock is lock!");
-/* return -EPERM; */
+/* return -1; */
 	}
 
 	usleep_range(1000, 1100);
@@ -877,6 +1349,19 @@ int gcore_idm_read_id(u8 *id, int length)
 	usleep_range(1000, 1100);
 #endif
 
+#if defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
+	gcore_idm_read_reg(0xC0000000 + (0x25 << 2), ckucr0, sizeof(ckucr0));
+	GTP_DEBUG("reg ckucr0:%x %x %x %x", ckucr0[0], ckucr0[1], ckucr0[2], ckucr0[3]);
+
+	usleep_range(1000, 1100);
+
+	ckucr0[2] &= 0x7F;
+	gcore_idm_write_reg(0xC0000000 + (0x25 << 2) + 2, &ckucr0[2], 1);
+
+	usleep_range(1000, 1100);
+#endif
+
 	gcore_idm_write_reg(0xD000FF00, cmd1, sizeof(cmd1));
 
 	usleep_range(1000, 1100);
@@ -889,7 +1374,7 @@ int gcore_idm_read_id(u8 *id, int length)
 	/* read ID */
 	gcore_idm_read_reg(0xD0000400, id, length);
 
-	GTP_DEBUG("chip id:%x %x", id[1], id[2]);
+	GTP_DEBUG("chip id:%x %x", id[0], id[1]);
 	usleep_range(1000, 1100);
 
 	/* lock page */
@@ -946,7 +1431,6 @@ int gcore_idm_close_tp(void)
 	return 0;
 }
 
-#if 0
 int gcore_idm_open_tp(void)
 {
 	u8 cmd1[] = { 0x55, 0xAA, 0x66 };
@@ -1006,7 +1490,6 @@ int gcore_idm_enter_gesture_mode(void)
 	u8 d4 = 0x0F;
 	u8 d5 = 0xBF;
 
-	GTP_INFO("enter");
 	gcore_enter_idm_mode();
 
 	usleep_range(1000, 1100);
@@ -1055,7 +1538,65 @@ int gcore_idm_enter_gesture_mode(void)
 
 	return 0;
 }
+
+int gcore_idm_tddi_reset(void)
+{
+	u8 cmd1[] = { 0x55, 0xAA, 0x66 };
+	u8 unlock = 0x10;
+	u8 clear28 = 0x00;
+
+#if defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H) \
+		|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
+	u8 ckucr0[4] = { 0 };
 #endif
+
+	gcore_enter_idm_mode();
+
+	usleep_range(3000, 3100);
+
+#if defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H) \
+		|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
+	gcore_idm_read_reg(0xC0000000 + (0x25 << 2), ckucr0, sizeof(ckucr0));
+	GTP_DEBUG("reg ckucr0:%x %x %x %x", ckucr0[0], ckucr0[1], ckucr0[2], ckucr0[3]);
+
+	usleep_range(3000, 3100);
+
+	ckucr0[2] &= 0x7F;
+	gcore_idm_write_reg(0xC0000000 + (0x25 << 2) + 2, &ckucr0[2], 1);
+
+	usleep_range(3000, 3100);
+#endif
+
+	gcore_idm_write_reg(0xD000FF00, cmd1, sizeof(cmd1));
+
+	usleep_range(3000, 3100);
+
+	/* unlock page */
+	gcore_idm_write_reg(0xD000FF00, &unlock, 1);
+
+	usleep_range(3000, 3100);
+
+	gcore_idm_write_reg(0xD0002800, &clear28, 1);
+
+	usleep_range(3000, 3100);
+
+	gcore_idm_write_reg(0xD000FF00, cmd1, sizeof(cmd1));
+
+	usleep_range(3000, 3100);
+
+	/* unlock page */
+	gcore_idm_write_reg(0xD000FF00, &unlock, 1);
+
+	usleep_range(3000, 3100);
+
+
+	gcore_exit_idm_mode();
+
+	usleep_range(3000, 3100);
+
+
+	return 0;
+}
 
 #ifdef CONFIG_ENABLE_FW_RAWDATA
 int gcore_set_fw_mode(enum FW_MODE mode)
@@ -1123,7 +1664,7 @@ int gcore_fw_mode_set_proc(enum FW_MODE mode)
 	return 0;
 
 set_mode_fail:
-	return -EPERM;
+	return -1;
 
 }
 */
@@ -1131,11 +1672,8 @@ set_mode_fail:
 int gcore_fw_mode_set_proc2(u8 mode)
 {
 	u8 cmd[] = { 0x40, 0xA0, 0x00, 0x00, 0x73, 0x71, 0x00, 0x00, mode };
-	u8 start_cmd[] = { 0x40, 0xA0, 0x00, 0x00, 0x73, 0x71, 0x00, 0x00, mode };
 	int ret = 0;
 
-	gcore_bus_write(start_cmd, sizeof(start_cmd));
-	usleep_range(1000, 1100);
 	ret = gcore_bus_write(cmd, sizeof(cmd));
 	if (ret) {
 		GTP_ERROR("fw mode set fail!");
@@ -1147,6 +1685,7 @@ int gcore_fw_mode_set_proc2(u8 mode)
 
 	return 0;
 }
+
 EXPORT_SYMBOL(gcore_fw_mode_set_proc2);
 #endif
 
@@ -1194,6 +1733,16 @@ int gcore_upgrade_soft_reset(void)
 	u8 data2[] = { 0x02, 0xEA, 0x00, 0x40, 0x23, 0xEA, 0x00, 0x40, 0x00, 0x30,
 		0x54, 0xB3, 0x3C, 0x78, 0x00, 0x00
 	};
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
+	u32 upgrade_addr = 0xC0000000 + ((0x14 << 2) + 1);
+	u8 value = BIT6;	/* bit6 write 1 */
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
+	u8 open = 0x00;
+	u8 close = 0x01;
+	u8 data1[] = { 0x00, 0x01, 0x00, 0x00 };
+	u8 data2[] = { 0x02, 0xEA, 0x00, 0x40, 0x23, 0xEA, 0x00, 0x40, 0x00, 0x30,
+		0x54, 0xB3, 0x3C, 0x78, 0x00, 0x00
+	};
 #endif
 
 #if defined(CONFIG_ENABLE_CHIP_TYPE_GC7371)
@@ -1235,21 +1784,24 @@ int gcore_upgrade_soft_reset(void)
 		return -EPERM;
 	}
 #elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7271) \
-			|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202)
+			|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202) \
+			|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
 
 	gcore_enter_idm_mode();
 
-	mdelay(5);
+	usleep_range(5000, 5100);
 
 	if (gcore_idm_write_reg(upgrade_addr, &value, 1)) {
 		GTP_ERROR("write reg rkucr0 upgrade fail");
+		return -EPERM;
 	}
 
 	usleep_range(1000, 1100);
 
 	gcore_exit_idm_mode();
 
-#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7372) \
+			|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
 
 	gcore_enter_idm_mode();
 
@@ -1287,6 +1839,101 @@ int gcore_upgrade_soft_reset(void)
 
 }
 
+int gcore_upgrade_soft_reset_noidm(void)
+{
+#if defined(CONFIG_ENABLE_CHIP_TYPE_GC7371)
+	u8 abccr0_3[4] = { 0 };
+	u32 abccr0 = 0xC0000000;
+	int ret = 0;
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7271)
+	u32 upgrade_addr = 0xC0000000 + ((0x14 << 2) + 1);
+	u8 value = BIT6;	/* bit6 write 1 */
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202)
+	u32 upgrade_addr = 0xC0000000 + ((0x14 << 2) + 1);
+	u8 value = BIT6;	/* bit6 write 1 */
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
+	u8 open = 0x00;
+	u8 close = 0x01;
+	u8 data1[] = { 0x00, 0x01, 0x00, 0x00 };
+	u8 data2[] = { 0x02, 0xEA, 0x00, 0x40, 0x23, 0xEA, 0x00, 0x40, 0x00, 0x30,
+		0x54, 0xB3, 0x3C, 0x78, 0x00, 0x00
+	};
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
+	u32 upgrade_addr = 0xC0000000 + ((0x14 << 2) + 1);
+	u8 value = BIT6;	/* bit6 write 1 */
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
+	u8 open = 0x00;
+	u8 close = 0x01;
+	u8 data1[] = { 0x00, 0x01, 0x00, 0x00 };
+	u8 data2[] = { 0x02, 0xEA, 0x00, 0x40, 0x23, 0xEA, 0x00, 0x40, 0x00, 0x30,
+		0x54, 0xB3, 0x3C, 0x78, 0x00, 0x00
+	};
+#endif
+
+#if defined(CONFIG_ENABLE_CHIP_TYPE_GC7371)
+
+	ret = gcore_reg_enable_write_on();
+	if (ret) {
+		GTP_ERROR("reg enable write on fail");
+		return -EPERM;
+	}
+
+	usleep_range(1000, 1100);
+
+	ret = gcore_idm_read_reg(abccr0, abccr0_3, sizeof(abccr0_3));
+	if (ret) {
+		GTP_ERROR("read reg abccr0 fail");
+		return -EPERM;
+	}
+
+	usleep_range(1000, 1100);
+
+	ret = gcore_idm_write_reg(abccr0, &abccr0_3[0], 1);
+	if (ret) {
+		GTP_ERROR("write reg abccr0 fail");
+		return -EPERM;
+	}
+
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7271) \
+			|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202) \
+			|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
+
+	if (gcore_idm_write_reg(upgrade_addr, &value, 1)) {
+		GTP_ERROR("write reg rkucr0 upgrade fail");
+		return -EPERM;
+	}
+
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7372) \
+			|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
+
+	if (gcore_idm_write_reg(0x40000050, &open, 1)) {
+		GTP_ERROR("write reg fail");
+	}
+
+	usleep_range(1000, 1100);
+
+	if (gcore_idm_write_reg(0x80020000, data1, sizeof(data1))) {
+		GTP_ERROR("write reg fail");
+	}
+
+	usleep_range(1000, 1100);
+
+	if (gcore_idm_write_reg(0x80020100, data2, sizeof(data2))) {
+		GTP_ERROR("write reg fail");
+	}
+
+	usleep_range(1000, 1100);
+
+	if (gcore_idm_write_reg(0x40000050, &close, 1)) {
+		GTP_ERROR("write reg fail");
+	}
+
+#endif
+
+	return 0;
+
+}
+
 int gcore_sys_soft_reset(void)
 {
 	u32 upgrade_addr = 0xC0000000 + ((0x14 << 2) + 1);
@@ -1307,11 +1954,9 @@ int gcore_sys_soft_reset(void)
 	return 0;
 }
 
-#define STARTUP_UPDATE_DELAY_MS  1000	/* ms */
+
 
 #ifdef CONFIG_GCORE_AUTO_UPDATE_FW_HOSTDOWNLOAD
-
-int hostdownload_idm = 0;
 
 /*
 * a printk will cost over 1ms cpu times, so we should not use printk
@@ -1351,7 +1996,7 @@ int gcore_auto_update_hostdownload(u8 *fw_buf)
 				if (gcore_bus_write(fw_data, 1024))
 				{
 					GTP_ERROR("host download write error.");
-					return -EPERM;
+					return -1;
 				}
 				usleep_range(1000, 1100);
 				fw_data += 1024;
@@ -1372,29 +2017,30 @@ int gcore_auto_update_hostdownload(u8 *fw_buf)
 				if (gcore_bus_write(fw_data, len))
 				{
 					GTP_ERROR("host download read error.");
-					return -EPERM;
+					return -1;
 				}
 
 				fw_data += len;
-				mdelay(2);
+				usleep_range(2000, 2100);
 			}
 */
 		break;
 
 	case 0xB2:
 		GTP_DEBUG("update pram fw retry 3 times fail!");
+		fw_update_fn.wait_int = false;
 		break;
 
 	case 0xB3:
 		GTP_DEBUG("update pram fw success...");
 		fw_update_fn.wait_int = false;
-		complete(&gcore_fw_update_complete);
+		complete(&fw_update_complete);
 		break;
 
 	default:
 		GTP_DEBUG("pram fw read unknow result.");
 		fw_update_fn.wait_int = false;
-		complete(&gcore_fw_update_complete);
+		complete(&fw_update_complete);
 		break;
 	}
 
@@ -1411,8 +2057,10 @@ int gcore_update_hostdownload_trigger(u8 *fw_buf)
 	gcore_reset();
 #elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7271) \
 	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202) \
-	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
-/* gcore_reset();  reset RESX pin */
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
+/* gcore_reset();  */
 
 	if (gcore_upgrade_soft_reset()) {
 		GTP_ERROR("hostdownload soft reset fail.");
@@ -1420,33 +2068,20 @@ int gcore_update_hostdownload_trigger(u8 *fw_buf)
 	}
 #endif
 
-	if (!wait_for_completion_interruptible_timeout(&gcore_fw_update_complete, 5 * HZ)) {
+	GTP_DEBUG("comple done:%d", fw_update_complete.done);
+	if (!wait_for_completion_interruptible_timeout(&fw_update_complete, 1 * HZ)) {
 		GTP_ERROR("hostdownload trigger timeout.");
+		fw_update_fn.wait_int = false;
 		return -EPERM;
 	}
 
-	/* The b3 handshake only confirms the PRAM write. On this chip the
-	 * bootloader does not start the downloaded app by itself - without
-	 * an explicit run command it keeps streaming its update-request
-	 * frame and touch stays dead. Mirror gcore_run_pram_fw exactly:
-	 * the remap+run command is issued while the idm window is
-	 * unlocked, then the window is closed. */
-	if (gcore_enter_idm_mode()) {
-		GTP_ERROR("pram fw run: enter idm fail.");
-		return -EPERM;
-	}
+	GTP_DEBUG("hostdownload trigger done");
 
-	{
-		u8 run_cmd[] = { 0x95, 0x27, 0x05, 0xFA, 0x40, 0x00, 0x00, 0x50, 0x81 };
-
-		if (gcore_bus_write(run_cmd, sizeof(run_cmd))) {
-			GTP_ERROR("pram fw run command fail.");
-		}
-	}
-
-	gcore_exit_idm_mode();
-	msleep(50);
-	GTP_INFO("pram fw run command sent (idm).");
+/* if (gcore_auto_update_hostdownload(fw_buf)) */
+/* { */
+/* GTP_ERROR("hostdownload write fail."); */
+/* return -1; */
+/* } */
 
 	return 0;
 }
@@ -1462,17 +2097,17 @@ int gcore_burn_fw_idm(u8 *fw_data)
 	u8 times = fw_length / size_one_time;
 	int ret = 0;
 
-	fw_data_buf = kzalloc(size_one_time + sizeof(cmd), GFP_KERNEL);
-	if (fw_data_buf == NULL) {
+	fw_data_buf = kzalloc(size_one_time + 8, GFP_KERNEL);
+	if (IS_ERR_OR_NULL(fw_data_buf)) {
 		GTP_ERROR("flash_op_buf mem allocate fail!");
 		return -ENOMEM;
 	}
 
 	while (times--) {
-		memcpy(fw_data_buf, cmd, sizeof(cmd));
-		memcpy(fw_data_buf + sizeof(cmd), fw_data, size_one_time);
+		memcpy(fw_data_buf, cmd, 8);
+		memcpy(fw_data_buf + 8, fw_data, size_one_time);
 
-		ret = gcore_bus_write(fw_data_buf, size_one_time + sizeof(cmd));
+		ret = gcore_bus_write(fw_data_buf, size_one_time + 8);
 		if (ret) {
 			GTP_ERROR("flash op fw addr write error.");
 			kfree(fw_data_buf);
@@ -1529,7 +2164,7 @@ int gcore_auto_update_hostdownload_proc(void *fw_buf)
 			return -EPERM;
 		}
 	} else {
-		if (gcore_update_hostdownload_idm(fw_buf)) {
+		if (gcore_update_hostdownload_idm2(fw_buf)) {
 			GTP_ERROR("hostdownload idm proc fail!");
 			return -EPERM;
 		}
@@ -1537,14 +2172,15 @@ int gcore_auto_update_hostdownload_proc(void *fw_buf)
 
 	return 0;
 }
+
 EXPORT_SYMBOL(gcore_auto_update_hostdownload_proc);
+
+#endif /* CONFIG_GCORE_AUTO_UPDATE_FW_HOSTDOWNLOAD */
 
 void set_hostdownload_idm(u8 value)
 {
 	hostdownload_idm = value;
 }
-
-#endif /* CONFIG_GCORE_AUTO_UPDATE_FW_HOSTDOWNLOAD */
 
 #ifdef CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD
 /*
@@ -1571,7 +2207,7 @@ int gcore_update_prepare(u8 *fw_buf)
 
 	update_info.flash_op_length = fw_op->size;
 	update_info.flash_op_data = kzalloc(update_info.flash_op_length, GFP_KERNEL);
-	if (update_info.flash_op_data == NULL) {
+	if (IS_ERR_OR_NULL(update_info.flash_op_data)) {
 		GTP_ERROR("flash op mem allocate fail!");
 		goto fail1;
 	}
@@ -1590,7 +2226,7 @@ int gcore_update_prepare(u8 *fw_buf)
 #endif
 
 	update_info.flash_op_buf = kzalloc(FLASH_OP_TRANSFER_SIZE + 8, GFP_KERNEL);
-	if (update_info.flash_op_buf == NULL) {
+	if (IS_ERR_OR_NULL(update_info.flash_op_buf)) {
 		GTP_ERROR("flash_op_buf mem allocate fail!");
 		goto fail2;
 	}
@@ -1598,9 +2234,9 @@ int gcore_update_prepare(u8 *fw_buf)
 	return 0;
 
 fail2:
-	if (update_info.flash_op_data != NULL) {
-		kfree(update_info.flash_op_data);
-	}
+
+	kfree(update_info.flash_op_data);
+
 #ifdef CONFIG_UPDATE_FIRMWARE_BY_BIN_FILE
 fail1:
 	if (fw_op) {
@@ -1643,7 +2279,7 @@ int gcore_update_judge(u8 *fw_buf)
 
 	if (fw_version_update <= fw_version) {
 		GTP_ERROR("The version of the fw is not high than the IC's!");
-		return -EPERM;
+/* return -1; */
 	}
 
 	return 0;
@@ -1732,15 +2368,9 @@ int gcore_flash_program_proc(void)
 
 void gcore_flashdownload_cleanup(void)
 {
-	if (update_info.flash_op_buf != NULL) {
-		kfree(update_info.flash_op_buf);
-		update_info.flash_op_buf = NULL;
-	}
+	kfree(update_info.flash_op_buf);
 
-	if (update_info.flash_op_data != NULL) {
-		kfree(update_info.flash_op_data);
-		update_info.flash_op_data = NULL;
-	}
+	kfree(update_info.flash_op_data);
 }
 
 int gcore_flash_op_request(enum FLASH_OP command)
@@ -1879,14 +2509,14 @@ int gcore_flash_op_reply_proc(void)
 				update_info.progress = 9;
 			} else {
 				GTP_DEBUG("flash download finish");
-				msleep(100);
+				usleep_range(1000, 1100);
 				/* gcore_run_fw_soft(); */
 				gcore_upgrade_soft_reset();
 				gcore_flashdownload_cleanup();
 				update_info.status = UPDATE_STATUS_IDLE;
 				update_info.progress = 10;
 				fw_update_fn.wait_int = false;
-				complete(&gcore_fw_update_complete);
+				complete(&fw_update_complete);
 			}
 
 		} else if (result == 0x02) {
@@ -1896,7 +2526,7 @@ int gcore_flash_op_reply_proc(void)
 			update_info.status = UPDATE_STATUS_IDLE;
 			update_info.progress = 10;
 			fw_update_fn.wait_int = false;
-			complete(&gcore_fw_update_complete);
+			complete(&fw_update_complete);
 		} else if (result == 0x00) {
 			GTP_DEBUG("flash download failed");
 			return -EPERM;
@@ -1962,21 +2592,24 @@ int gcore_auto_update_flashdownload_proc(void *fw_buf)
 	}
 	update_info.progress = 5;
 
-	mdelay(1);
+	usleep_range(2000, 2100);
+
+	mutex_unlock(&gdev_fwu->transfer_lock);
 	gdev_fwu->irq_enable(gdev_fwu);
+
+	msleep(50);
 
 	gdev_fwu->fw_event = FW_UPDATE;
 	fw_update_fn.wait_int = true;
 
 	ret = gcore_flash_op_request(READ_FLASH_ID);
 	if (ret) {
-		goto fail2;
+		goto gcore_update_exit;
 	}
 	update_info.progress = 6;
 
-	mutex_unlock(&gdev_fwu->transfer_lock);
 
-	if (!wait_for_completion_timeout(&gcore_fw_update_complete, 20 * HZ)) {
+	if (!wait_for_completion_timeout(&fw_update_complete, 20 * HZ)) {
 		GTP_ERROR("update flashdownload timeout!");
 		goto gcore_update_exit;
 	}
@@ -1984,16 +2617,17 @@ int gcore_auto_update_flashdownload_proc(void *fw_buf)
 	return 0;
 
 fail1:
-	gdev_fwu->irq_enable(gdev_fwu);
-fail2:
 	mutex_unlock(&gdev_fwu->transfer_lock);
+	gdev_fwu->irq_enable(gdev_fwu);
 gcore_update_exit:
 	GTP_ERROR("update flashdownload proc fail");
 	gcore_flashdownload_cleanup();
 	update_info.status = UPDATE_STATUS_IDLE;
+	fw_update_fn.wait_int = false;
 
 	return -EPERM;
 }
+
 EXPORT_SYMBOL(gcore_auto_update_flashdownload_proc);
 
 #define FSPI_BURN_BUF_SIZE   256
@@ -2110,115 +2744,6 @@ int gcore_fspi_erase_flash(void)
 
 		if (result & BIT1) {
 			break;
-		}
-		retry++;
-
-	}
-
-	if (retry == FSPI_RETRY_TIMES) {
-		GTP_ERROR("fspi erase read bit1 != 1 fail");
-		return -EPERM;
-	}
-	gcore_fspi_cs_high();
-	usleep_range(1000, 1100);
-
-	gcore_fspi_cs_low();
-	usleep_range(1000, 1100);
-	gcore_fspi_write(buf1, sizeof(buf1));
-	usleep_range(1000, 1100);
-	gcore_fspi_cs_high();
-	usleep_range(1000, 1100);
-
-	gcore_fspi_cs_low();
-	usleep_range(1000, 1100);
-
-	gcore_fspi_write(&d3, 1);
-	usleep_range(1000, 1100);
-
-	retry = 0;
-	while (retry < FSPI_RETRY_TIMES) {
-		gcore_fspi_write(&d4, 1);
-		usleep_range(1000, 1100);
-
-		gcore_fspi_read(&result, 1);
-		usleep_range(1000, 1100);
-		GTP_DEBUG("fspi erase finish byes:%x", result);
-
-		if ((result & BIT0) == 0) {
-			break;
-		}
-		retry++;
-
-	}
-
-	if (retry == FSPI_RETRY_TIMES) {
-		GTP_ERROR("fspi erase read bit0 != 0 fail");
-		return -EPERM;
-	}
-	gcore_fspi_cs_high();
-	usleep_range(1000, 1100);
-
-	gcore_fspi_cs_low();
-	usleep_range(1000, 1100);
-	gcore_fspi_write(buf2, sizeof(buf2));
-	usleep_range(1000, 1100);
-	gcore_fspi_cs_high();
-	usleep_range(1000, 1100);
-
-	gcore_fspi_read(&result, 1);
-	usleep_range(1000, 1100);
-
-	if ((result & BIT0) == 0) {
-		GTP_DEBUG("fspi erase flash success");
-	} else {
-		GTP_ERROR("fspi erase flash fail");
-		return -EPERM;
-	}
-
-	return 0;
-
-}
-
-int gcore_fspi_erase_flash_block(u8 block)
-{
-	u8 d1 = 0xAB;
-	u8 d2 = 0x06;
-	u8 d3 = 0x05;
-	u8 d4 = 0xFF;
-	u8 result = 0;
-	int retry = 0;
-	u8 buf1[] = { 0xD8, block, 0x00, 0x00 };
-	u8 buf2[] = { 0x05, 0xFF, 0x2B };
-	
-	gcore_fspi_cs_low();
-	usleep_range(1000, 1100);
-	gcore_fspi_write(&d1, 1);
-	usleep_range(1000, 1100);
-	gcore_fspi_cs_high();
-	usleep_range(1000, 1100);
-
-	gcore_fspi_cs_low();
-	usleep_range(1000, 1100);
-	gcore_fspi_write(&d2, 1);
-	usleep_range(1000, 1100);
-	gcore_fspi_cs_high();
-	usleep_range(1000, 1100);
-
-	gcore_fspi_cs_low();
-	usleep_range(1000, 1100);
-
-	gcore_fspi_write(&d3, 1);
-	usleep_range(1000, 1100);
-
-	while (retry < FSPI_RETRY_TIMES) {
-		gcore_fspi_write(&d4, 1);
-		usleep_range(1000, 1100);
-
-		gcore_fspi_read(&result, 1);
-		usleep_range(1000, 1100);
-
-		if (result & BIT1) {
-			break;
 		} else {
 			retry++;
 		}
@@ -2297,10 +2822,12 @@ int gcore_fspi_burn_flash(u32 addr, u8 *buff, int len)
 	u8 d3 = 0xFF;
 	u8 result = 0;
 	int retry = 0;
-	u8 *fspi_buf = NULL;
+	static u8 *fspi_buf;
 
+	if (IS_ERR_OR_NULL(fspi_buf)) {
+		fspi_buf = kzalloc(FSPI_BURN_BUF_SIZE + 4, GFP_KERNEL);
+	}
 
-	fspi_buf = kzalloc(FSPI_BURN_BUF_SIZE + 4, GFP_KERNEL);
 	if (!fspi_buf) {
 		GTP_ERROR("fspi buf mem allocate fail");
 		return -EPERM;
@@ -2313,24 +2840,24 @@ int gcore_fspi_burn_flash(u32 addr, u8 *buff, int len)
 	memcpy(fspi_buf + 4, buff, len);
 
 	gcore_fspi_cs_low();
-	usleep_range(100, 110);
+	usleep_range(1000, 1100);
 	gcore_fspi_write(&d1, 1);
-	usleep_range(100, 110);
+	usleep_range(1000, 1100);
 	gcore_fspi_cs_high();
-	usleep_range(100, 110);
+	usleep_range(1000, 1100);
 
 	gcore_fspi_cs_low();
-	usleep_range(100, 110);
+	usleep_range(1000, 1100);
 
 	gcore_fspi_write(&d2, 1);
-	usleep_range(100, 110);
+	usleep_range(1000, 1100);
 
 	while (retry < 3) {
 		gcore_fspi_write(&d3, 1);
-		usleep_range(100, 110);
+		usleep_range(1000, 1100);
 
 		gcore_fspi_read(&result, 1);
-		usleep_range(100, 110);
+		usleep_range(1000, 1100);
 
 		if (result & BIT1) {
 			break;
@@ -2341,32 +2868,31 @@ int gcore_fspi_burn_flash(u32 addr, u8 *buff, int len)
 
 	if (retry == 3) {
 		GTP_ERROR("fspi burn read bit1 != 1 fail");
-		kfree(fspi_buf);
 		return -EPERM;
 	}
 	gcore_fspi_cs_high();
-	usleep_range(100, 110);
+	usleep_range(1000, 1100);
 
 	gcore_fspi_cs_low();
-	usleep_range(100, 110);
+	usleep_range(1000, 1100);
 	gcore_fspi_write(fspi_buf, FSPI_BURN_BUF_SIZE + 4);
-	usleep_range(100, 110);
+	usleep_range(1000, 1100);
 	gcore_fspi_cs_high();
-	usleep_range(100, 110);
+	usleep_range(1000, 1100);
 
 	gcore_fspi_cs_low();
-	usleep_range(100, 110);
+	usleep_range(1000, 1100);
 
 	gcore_fspi_write(&d2, 1);
-	usleep_range(100, 110);
+	usleep_range(1000, 1100);
 
 	retry = 0;
 	while (retry < 3) {
 		gcore_fspi_write(&d3, 1);
-		usleep_range(100, 110);
+		usleep_range(1000, 1100);
 
 		gcore_fspi_read(&result, 1);
-		usleep_range(100, 110);
+		usleep_range(1000, 1100);
 
 		if ((result & BIT0) == 0) {
 			break;
@@ -2377,12 +2903,11 @@ int gcore_fspi_burn_flash(u32 addr, u8 *buff, int len)
 
 	if (retry == 3) {
 		GTP_ERROR("fspi burn read bit0 != 0 fail");
-		kfree(fspi_buf);
 		return -EPERM;
 	}
 	gcore_fspi_cs_high();
-	usleep_range(100, 110);
-	kfree(fspi_buf);
+	usleep_range(1000, 1100);
+
 	return 0;
 
 }
@@ -2392,10 +2917,12 @@ int gcore_flashdownload_fspi_proc(void *fw_buf)
 	int ret = 0;
 	u8 *fw_data = fw_buf;
 	u32 flash_addr = 0;
-	u8 value = 0x40;
-	struct gcore_dev *gdev = fn_data.gdev;
+#ifdef CONFIG_ENABLE_CHIP_TYPE_GC7302
+#ifdef CONFIG_TOUCH_DRIVER_INTERFACE_I2C
+	u8 syscr4[4] = { 0 };
+#endif
+#endif
 
-	gdev->tp_fw_update = true;
 	ret = gcore_enter_idm_mode();
 	if (ret) {
 		GTP_ERROR("fspi enter idm mode fail");
@@ -2403,6 +2930,22 @@ int gcore_flashdownload_fspi_proc(void *fw_buf)
 	}
 
 	usleep_range(1000, 1100);
+
+#ifdef CONFIG_ENABLE_CHIP_TYPE_GC7302
+#ifdef CONFIG_TOUCH_DRIVER_INTERFACE_I2C
+	gcore_idm_read_reg(0xC0000000 + (0x24 << 2), syscr4, sizeof(syscr4));
+	GTP_DEBUG("i2c hold timeout value:%x %x %x %x", syscr4[0], \
+											syscr4[1], syscr4[2], syscr4[3]);
+	usleep_range(1000, 1100);
+
+	syscr4[0] = 0x01;
+	syscr4[1] = 0x00;
+	syscr4[2] &= 0xf0;
+	gcore_idm_write_reg(0xC0000000 + (0x24 << 2), syscr4, sizeof(syscr4));
+
+	usleep_range(1000, 1100);
+#endif
+#endif
 
 	ret = gcore_fspi_init();
 	if (ret) {
@@ -2418,16 +2961,6 @@ int gcore_flashdownload_fspi_proc(void *fw_buf)
 		return -EPERM;
 	}
 
-	usleep_range(1000, 1100);
-
-	ret = gcore_fspi_erase_flash_block(0x01);
-	if (ret) {
-		GTP_ERROR("fspi erase flash 01 fail");
-		return -EPERM;
-	}
-
-	usleep_range(1000, 1100);
-
 	while (flash_addr != 0x10000) {
 		GTP_DEBUG("burn flash addr:%x", flash_addr);
 		gcore_fspi_burn_flash(flash_addr, fw_data, FSPI_BURN_BUF_SIZE);
@@ -2435,7 +2968,36 @@ int gcore_flashdownload_fspi_proc(void *fw_buf)
 		fw_data += FSPI_BURN_BUF_SIZE;
 	}
 
-	gcore_idm_write_reg(0xC0000051, &value, 1);
+	usleep_range(1000, 1100);
+
+#ifdef CONFIG_ENABLE_CHIP_TYPE_GC7302
+#ifdef CONFIG_TOUCH_DRIVER_INTERFACE_I2C
+	gcore_idm_read_reg(0xC0000000 + (0x24 << 2), syscr4, sizeof(syscr4));
+	GTP_DEBUG("i2c hold timeout value:%x %x %x %x", syscr4[0], \
+											syscr4[1], syscr4[2], syscr4[3]);
+	usleep_range(1000, 1100);
+
+	syscr4[0] = 0x01;
+	syscr4[1] = 0x00;
+	syscr4[2] &= 0xf0;
+	gcore_idm_write_reg(0xC0000000 + (0x24 << 2), syscr4, sizeof(syscr4));
+
+	usleep_range(1000, 1100);
+
+	gcore_idm_read_reg(0xC0000000 + (0x25 << 2), syscr4, sizeof(syscr4));
+	GTP_DEBUG("reg ckucr0:%x %x %x %x", syscr4[0], syscr4[1], syscr4[2], syscr4[3]);
+
+	usleep_range(1000, 1100);
+
+	syscr4[2] |= 0x80;
+	gcore_idm_write_reg(0xC0000000 + (0x25 << 2) + 2, &syscr4[2], 1);
+
+	usleep_range(1000, 1100);
+#endif
+#endif
+
+	gcore_upgrade_soft_reset_noidm();
+
 	usleep_range(1000, 1100);
 
 	ret = gcore_exit_idm_mode();
@@ -2443,58 +3005,87 @@ int gcore_flashdownload_fspi_proc(void *fw_buf)
 		GTP_ERROR("fspi exit idm mode fail");
 		return -EPERM;
 	}
-	gdev->tp_fw_update = false;
+
 	return 0;
 }
 
-#endif /* CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD */
-
-#ifdef CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD
-int gcore_earse_flash_block01_proc(void)
+int gcore_flashdownload_proc(void *fw_buf)
 {
-	int ret = 0;
-	u8 block = 0x01;
-	u8 value = 0x40;
-
-	usleep_range(1000, 1100);
-	
-	ret = gcore_enter_idm_mode();
-	if (ret) {
-		GTP_ERROR("fspi enter idm mode fail");
-		return -EPERM;
+	if (!hostdownload_idm) {
+#if defined(CONFIG_ENABLE_CHIP_TYPE_GC7371) || \
+	defined(CONFIG_ENABLE_CHIP_TYPE_GC7271)
+		if (gcore_auto_update_flashdownload_proc(fw_buf)) {
+			GTP_ERROR("auto flashdownload proc fail");
+			return -EPERM;
+		}
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7372) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
+		if (gcore_flashdownload_fspi_proc(fw_buf)) {
+			GTP_ERROR("fspi flashdownload proc fail");
+			return -EPERM;
+		}
+#endif
+	} else {
+		if (gcore_update_hostdownload_idm2(fw_buf)) {
+			GTP_ERROR("hostdownload idm proc fail!");
+			return -EPERM;
+		}
 	}
 
-	usleep_range(1000, 1100);
+	return 0;
 
-	ret = gcore_fspi_init();
-	if (ret) {
-		GTP_ERROR("fspi init fail");
-		return -EPERM;
+}
+
+int update_force = 0;
+
+int gcore_flashdl_exist_check(void)
+{
+/*
+	u8 result = 0;
+
+	if (gcore_bus_read(&result, 1)) {
+		GTP_ERROR("read result error.");
+		return 0;
 	}
 
-	usleep_range(1000, 1100);
-
-	ret = gcore_fspi_erase_flash_block(block);
-	if (ret) {
-		GTP_ERROR("fspi erase flash fail");
+	if ((result == 0xB4) || (result == 0xB5)) {
+		GTP_DEBUG("flashdownload check B4 or B5!");
 		return -EPERM;
 	}
-
-	usleep_range(1000, 1100);
-	
-	gcore_idm_write_reg(0xC0000051, &value, 1);
-	usleep_range(1000, 1100);
-
-	ret = gcore_exit_idm_mode();
-	if (ret) {
-		GTP_ERROR("fspi exit idm mode fail");
-		return -EPERM;
-	}
-
-	usleep_range(1000, 1100);
-	
+*/
 	return 0;
 }
+
+int gcore_flashdl_version_check(u8 *fw_buf)
+{
+	u8 ver[4] = { 0 };	/* little-endian */
+	u8 fw_version = 0;
+	u8 fw_version_update = 0;
+
+	gcore_read_fw_version(ver, sizeof(ver));
+
+	fw_version = ver[2];
+	fw_version_update = fw_buf[FW_VERSION_ADDR + 2];
+
+
+	GTP_DEBUG("fw_version_update=%x fw_version=%x", fw_version_update, fw_version);
+
+	if ((ver[0] != fw_buf[FW_VERSION_ADDR]) || (ver[1] != fw_buf[FW_VERSION_ADDR + 1]) \
+										    || (ver[3] != fw_buf[FW_VERSION_ADDR + 3])) {
+		GTP_ERROR("The ram's fw is not correct!");
+		return -EPERM;
+	}
+
+	if (fw_version_update > fw_version) {
+		GTP_ERROR("The version of the fw is higher than the IC's!");
+ 		return -EPERM;
+	}
+
+	return 0;
+}
+
 #endif /* CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD */
 
 int gcore_burn_fw_idm2(u8 *fw_data)
@@ -2506,8 +3097,16 @@ int gcore_burn_fw_idm2(u8 *fw_data)
 	u32 addr = 0x80010000;
 	int ret = 0;
 
-	GTP_INFO(" time is: %d.", times);
+#if defined(CONFIG_ENABLE_CHIP_TYPE_GC7372) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H) \
+	|| defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
+	addr = 0x80020000;
+#else
+	addr = 0x80010000;
+#endif
+
 	while (times--) {
+		GTP_DEBUG("idm write addr:%x", addr);
 		ret = gcore_idm_write_reg(addr, fw_buf, size_one_time);
 		if (ret) {
 			GTP_ERROR("idm burn fw write error.");
@@ -2576,148 +3175,202 @@ gcore_update_exit:
 
 }
 
-u8 g_ret_update;
-
-int gcore_update_check(u8 *fw_buf)
+unsigned int CRC32(unsigned char *puchMsg, unsigned int usDataLen)
 {
-	u8 ver[4] = { 0 };	/* little-endian */
-	u8 fw_version = 0;
-	u8 fw_version_update = 0;
+    unsigned int wCRCin = 0xFFFFFFFF;
+    unsigned int wCPoly = 0x04C11DB7;
+    unsigned char wChar = 0;
+    int i = 0;
 
-	gcore_read_fw_version_retry(ver, sizeof(ver));
+    while (usDataLen--)
+    {
+        wChar = *(puchMsg++);
+        wCRCin ^= (wChar << 24);
 
-	fw_version = ver[2];
-	fw_version_update = fw_buf[FW_VERSION_ADDR + 2];
-	GTP_DEBUG("fw_version_update=0x%x fw_version=0x%x", fw_version_update, fw_version);
+        for( i = 0;i < 8;i++ )
+        {
+            if(wCRCin & 0x80000000)
+                wCRCin = (wCRCin << 1) ^ wCPoly;
+            else
+                wCRCin = wCRCin << 1;
+        }
+    }
 
-	if ((fw_version != 0XFF) && (fw_version_update <= fw_version)) {
-		GTP_ERROR("The version of the fw is not high than the IC's!");
-		return -EPERM;
-	}
-
-	return 0;
+    return (wCRCin) ;
 }
 
+void add_CRC (u8 *fw_buf)
+{
+	/*
+	*add CRC for fw_bin start
+    *check CRC
+	*if fw bin dont have crc==0,do cal and replace
+    */
+   u8 CRCVal = 0;
+   u32 sCRC32Result = 0;
+
+   CRCVal = fw_buf[65528] +fw_buf[65529] + fw_buf[65530] + fw_buf[65531];
+
+   if(CRCVal == 0) {
+		sCRC32Result = CRC32( fw_buf, 65528 );
+		fw_buf[65528] = (sCRC32Result & 0xFF000000) >> 24;
+		fw_buf[65529] = (sCRC32Result & 0x00FF0000) >> 16;
+		fw_buf[65530] = (sCRC32Result & 0x0000FF00) >> 8;
+		fw_buf[65531] = (sCRC32Result & 0x000000FF);
+
+		GTP_DEBUG("sCRC32Result = 0x%08X\n", sCRC32Result);
+		/* GTP_DEBUG("fw_buf[65528] = 0x%04X\n", fw_buf[65528]); */
+		/* GTP_DEBUG("fw_buf[65529] = 0x%04X\n", fw_buf[65529]); */
+		/* GTP_DEBUG("fw_buf[65530] = 0x%04X\n", fw_buf[65530]); */
+		/* GTP_DEBUG("fw_buf[65531] = 0x%04X\n", fw_buf[65531]); */
+   }
+	/* add CRC for fw_bin end */
+}
+
+#if GCORE_WDT_RECOVERY_ENABLE
+int gcore_tp_esd_fail = 0;
+
+int gcore_esd_is_fail(void)
+{
+	GTP_DEBUG("tp esd flag:%d", gcore_tp_esd_fail);
+
+	return gcore_tp_esd_fail;
+}
+EXPORT_SYMBOL(gcore_esd_is_fail);
+#endif
+
+void gcore_trigger_esd_recovery(void)
+{
+	GTP_DEBUG("gcore trigger esd recovery!");
+
+#if GCORE_WDT_RECOVERY_ENABLE
+	gcore_tp_esd_fail = true;
+#endif
+}
+
+u8 retry_count = 0;
 
 void gcore_request_firmware_update_work(struct work_struct *work)
 {
-	u8 *fw_buf = NULL;
+	static u8 *fw_buf = NULL;
 #ifdef CONFIG_UPDATE_FIRMWARE_BY_BIN_FILE
 	const struct firmware *fw = NULL;
 
-	fw_buf = kzalloc(FW_SIZE, GFP_KERNEL);
-	if (!fw_buf) {
+	if (IS_ERR_OR_NULL(fw_buf)) {
+		fw_buf = kzalloc(FW_SIZE, GFP_KERNEL);
+	}
+
+	if (IS_ERR_OR_NULL(fw_buf)) {
 		GTP_ERROR("fw buf mem allocate fail");
-		return;
+		goto retry;
 	}
-
-	GTP_ERROR("request firmware '%s' from dev %s", FW_BIN_NAME,
-		  gdev_fwu && gdev_fwu->bus_device ? dev_name(&gdev_fwu->bus_device->dev) : "NULL");
-	if (request_firmware(&fw, FW_BIN_NAME, &gdev_fwu->bus_device->dev)) {
-		GTP_ERROR("request firmware fail: '%s' size want %d", FW_BIN_NAME, (int)FW_SIZE);
-		tpd_zlog_record_notify(TP_REQUEST_FIRMWARE_ERROR_NO);
-		goto fail1;
-	}
-	GTP_ERROR("request firmware ok '%s' size %d", FW_BIN_NAME, (int)fw->size);
-
-	memcpy(fw_buf, fw->data, fw->size);
+	fn_data.gdev->tp_fw_update = true;
+	gdev_fwu->fw_mem = fw_buf;
+	if (gcore_adb_upgrade_firmware) {
+		if (gcore_adb_upgrade_firmware->size > FW_SIZE)
+			return;
+		memcpy(fw_buf, gcore_adb_upgrade_firmware->data, gcore_adb_upgrade_firmware->size);
+		usleep_range(10000, 11000);
+	} else {
+		GTP_DEBUG("request_firmware is %s", FW_BIN_NAME);
+		if (request_firmware(&fw, FW_BIN_NAME, &gdev_fwu->bus_device->dev)) {
+			GTP_ERROR("request firmware fail,firmware: %s", FW_BIN_NAME);
+#ifdef GCORE_DEFAULT_FIRMWARE
+			GTP_DEBUG(" try requeset %s\n", DEFAULT_UPDATE_FIRMWARE_NAME);
+			if (request_firmware(&fw, DEFAULT_UPDATE_FIRMWARE_NAME, &gdev_fwu->bus_device->dev)) {
+				GTP_ERROR("request default firmware fail,firmware: %s", DEFAULT_UPDATE_FIRMWARE_NAME);
+#ifdef CONFIG_VENDOR_ZTE_LOG_EXCEPTION
+				tpd_zlog_record_notify(TP_REQUEST_FIRMWARE_ERROR_NO);
+				if (tpd_cdev->get_tpinfo)
+					tpd_cdev->get_tpinfo(tpd_cdev);
+#endif
+				return;
+                        }
+#else
+#ifdef CONFIG_VENDOR_ZTE_LOG_EXCEPTION
+			tpd_zlog_record_notify(TP_REQUEST_FIRMWARE_ERROR_NO);
+			if (tpd_cdev->get_tpinfo)
+				tpd_cdev->get_tpinfo(tpd_cdev);
+#endif
+			return;
+#endif
+                }
+		if (fw->size > FW_SIZE)
+			return;
+		memcpy(fw_buf, fw->data, fw->size);
+		release_firmware(fw);
+        }
+	add_CRC(fw_buf);
 
 	GTP_DEBUG("fw buf:%x %x %x %x %x %x", fw_buf[0], fw_buf[1], fw_buf[2],
 		  fw_buf[3], fw_buf[4], fw_buf[5]);
-
-	if (fw) {
-		release_firmware(fw);
-	}
 #else
 	fw_buf = gcore_default_FW;
 #endif
-#if defined(CONFIG_TOUCH_DRIVER_INTERFACE_I2C)
-	if (gcore_update_check(fw_buf))
-		goto fail1;
-#endif
+
+	gdev_fwu->fw_ver_in_bin[0] = fw_buf[FW_VERSION_ADDR];
+	gdev_fwu->fw_ver_in_bin[1] = fw_buf[FW_VERSION_ADDR + 1];
+	gdev_fwu->fw_ver_in_bin[2] = fw_buf[FW_VERSION_ADDR + 2];
+	gdev_fwu->fw_ver_in_bin[3] = fw_buf[FW_VERSION_ADDR + 3];
+
+	GTP_DEBUG("fw bin ver:%x %x %x %x", gdev_fwu->fw_ver_in_bin[1], gdev_fwu->fw_ver_in_bin[0], \
+										gdev_fwu->fw_ver_in_bin[3], gdev_fwu->fw_ver_in_bin[2]);
+
 	g_ret_update = 0;
 
 #ifdef CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD
-#if defined(CONFIG_ENABLE_CHIP_TYPE_GC7371) || \
-	defined(CONFIG_ENABLE_CHIP_TYPE_GC7271)
-	if (gcore_auto_update_flashdownload_proc(fw_buf)) {
-		GTP_ERROR("auto update flashdownload proc fail");
-		goto fail1;
+	if (update_force || gcore_flashdl_exist_check() ||
+		gcore_flashdl_version_check(fw_buf)) {
+		if (gcore_flashdownload_proc(fw_buf)) {
+			GTP_ERROR("reqst work flashdownload proc fail");
+			goto retry;
+		}
 	}
-#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202)
-	if (gcore_flashdownload_fspi_proc(fw_buf)) {
-		GTP_ERROR("flashdownload fspi proc fail");
-		goto fail1;
-	}
-#endif
-
 #else
 	if (gcore_auto_update_hostdownload_proc(fw_buf)) {
 		GTP_ERROR("auto update hostdownload proc fail");
-		goto fail1;
+		goto retry;
 	}
 #endif
-#ifdef CONFIG_VENDOR_ZTE_LOG_EXCEPTION
-		if(tpd_cdev->get_tpinfo)
-			tpd_cdev->get_tpinfo(tpd_cdev);
+
+
+	gcore_touch_release_all_point(gdev_fwu->input_device);
+
+#if GCORE_WDT_RECOVERY_ENABLE
+	mod_delayed_work(gdev_fwu->fwu_workqueue, &gdev_fwu->wdt_work,
+					   msecs_to_jiffies(GCORE_WDT_TIMEOUT_PERIOD));
+	gcore_tp_esd_fail = false;
 #endif
 	g_ret_update = 1;
-#ifdef CONFIG_UPDATE_FIRMWARE_BY_BIN_FILE
-	kfree(fw_buf);
+	retry_count = 0;
+	fn_data.gdev->tp_fw_update = false;
+#ifdef CONFIG_VENDOR_ZTE_LOG_EXCEPTION
+	if (tpd_cdev->get_tpinfo)
+		tpd_cdev->get_tpinfo(tpd_cdev);
 #endif
 	return;
-fail1:
-#ifdef CONFIG_UPDATE_FIRMWARE_BY_BIN_FILE
-	kfree(fw_buf);
-#endif
-	tpd_zlog_record_notify(TP_FW_UPGRADE_ERROR_NO);
 
+retry:
+	retry_count++;
+	if( retry_count < MAX_FW_RETRY_NUM ) {
+		GTP_ERROR("hostdl retry times:%d", retry_count);
+		queue_delayed_work(fn_data.gdev->fwu_workqueue,
+			               &fn_data.gdev->fwu_work,
+	                       msecs_to_jiffies(100));
+	}
+	else {
+#ifdef CONFIG_VENDOR_ZTE_LOG_EXCEPTION
+		tpd_zlog_record_notify(TP_FW_UPGRADE_ERROR_NO);
+		if (tpd_cdev->get_tpinfo)
+				tpd_cdev->get_tpinfo(tpd_cdev);
+#endif
+		gcore_trigger_esd_recovery();
+
+		retry_count = 0;
+	}
 }
 
 #ifdef CONFIG_ENABLE_FW_RAWDATA
-
-int gcore_mp_firmware_update(void)
-{
-	u8 *fw_buf = NULL;
-#ifdef CONFIG_UPDATE_FIRMWARE_BY_BIN_FILE
-	const struct firmware *fw = NULL;
-
-	fw_buf = kzalloc(FW_SIZE, GFP_KERNEL);
-	if (!fw_buf) {
-		GTP_ERROR("fw buf mem allocate fail");
-		return -EPERM;
-	}
-
-	if (request_firmware(&fw, gcore_mp_firmware_name, &gdev_fwu->bus_device->dev)) {
-		GTP_ERROR("request mp firmware fail");
-		goto fail1;
-	}
-
-	memcpy(fw_buf, fw->data, fw->size);
-
-	GTP_DEBUG("fw buf:%x %x %x %x %x %x, fw->size:%d",
-		fw_buf[0], fw_buf[1], fw_buf[2], fw_buf[3], fw_buf[4], fw_buf[5], fw->size);
-
-	if (fw) {
-		release_firmware(fw);
-	}
-#else
-	fw_buf = gcore_mp_FW;
-#endif
-	g_ret_update = 0;
-
-	if (gcore_update_hostdownload_idm2(fw_buf)) {
-		GTP_ERROR("auto update hostdownload proc fail");
-		goto fail1;
-	}
-
-	g_ret_update = 1;
-	return 0;
-fail1:
-	kfree(fw_buf);
-	return -EPERM;
-
-}
 
 /*
  * FW mode set sys interface
@@ -2727,18 +3380,15 @@ static ssize_t fw_mode_set_store(struct device *dev, struct device_attribute *at
 {
 	u32 mode = 0;
 
-	if (!strncmp(buf, "-w", 2)) {
-		buf += 3;
-		if (!strncmp(buf, "fw_mode=", 8) && (sscanf(buf + 8, "%d", &mode) == 1)) {
-			GTP_DEBUG("Set fw_mode is:%d", mode);
-			if (gcore_fw_mode_set_proc2(mode)) {
-				GTP_DEBUG("fw mode set proc fail");
-				return -EPERM;
-			}
-		} else {
-			GTP_DEBUG("Wrong parameters.");
+	if (sscanf(buf, "%d", &mode) == 1) {
+		GTP_DEBUG("Set fw_mode is:%d", mode);
+		if (gcore_fw_mode_set_proc2(mode)) {
+			GTP_DEBUG("fw mode set proc fail");
 			return -EPERM;
 		}
+	} else {
+		GTP_DEBUG("Wrong parameters.");
+		return -EPERM;
 	}
 
 	return count;
@@ -2796,9 +3446,87 @@ static ssize_t fw_reg_rw_store(struct device *dev, struct device_attribute *attr
 
 }
 
+u8 r_buff[4];
+
+static ssize_t page_reg_rw_show(struct device *dev,
+					struct device_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "Reg:%02x %02x %02x %02x\n",
+			 r_buff[0], r_buff[1], r_buff[2], r_buff[3]);
+}
+
+static ssize_t page_reg_rw_store(struct device *dev,
+					struct device_attribute *attr, const char *buf, size_t count)
+{
+   u32 page = 0;
+   u32 addr = 0;
+   u32 value = 0;
+   u32 length = 4;
+/* u8 r_buff[4] = { 0 }; */
+
+   if (!strncmp(buf, "-w", 2)) {
+	   buf += 3;
+	   if (!strncmp(buf, "page=", 5) && !strncmp(buf + 8, "adr=", 4) &&
+	   	   !strncmp(buf + 8 + 13, "val=", 4) &&
+		   (sscanf(buf, "page=%x adr=%x val=%x", &page, &addr, &value) == 3)) {
+		   GTP_DEBUG("page is:%x,addr is:%x,value is:%x", page, addr, value);
+		   if (gcore_idm_write_page_reg((u8)page, addr, (u8 *)&value, 1)) {
+			   GTP_ERROR("idm reg write fail");
+			   return -EPERM;
+		   }
+	   } else {
+		   GTP_ERROR("Wrong parameters.");
+		   return -EPERM;
+	   }
+   } else if (!strncmp(buf, "-r", 2)) {
+	   buf += 3;
+	   if (!strncmp(buf, "page=", 5) && !strncmp(buf + 8, "adr=", 4) &&
+	   	   (sscanf(buf, "page=%x adr=%x", &page, &addr) == 2)) {
+		   GTP_DEBUG("page is:%x, addr is:%x", page, addr);
+		   if (gcore_idm_read_page_reg((u8)page, addr, r_buff, length)) {
+			   GTP_ERROR("idm reg write fail");
+			   return -EPERM;
+		   }
+		   GTP_DEBUG("reg:%02x %02x %02x %02x", r_buff[0], r_buff[1], \
+		   			r_buff[2], r_buff[3]);
+	   } else {
+		   GTP_ERROR("Wrong parameters.");
+		   return -EPERM;
+	   }
+   } else if (!strncmp(buf, "-i", 2)) {
+	   gdev_fwu->irq_disable(gdev_fwu);
+#if GCORE_WDT_RECOVERY_ENABLE
+	   cancel_delayed_work_sync(&fn_data.gdev->wdt_work);
+#endif
+
+	   GTP_DEBUG("enter idm mode");
+	   gcore_enter_idm_mode();
+   } else if (!strncmp(buf, "-o", 2)) {
+	   GTP_DEBUG("exit idm mode");
+	   gcore_exit_idm_mode();
+
+#if GCORE_WDT_RECOVERY_ENABLE
+	  mod_delayed_work(fn_data.gdev->fwu_workqueue,
+							&fn_data.gdev->wdt_work,
+							msecs_to_jiffies(GCORE_WDT_TIMEOUT_PERIOD));
+#endif
+	  gdev_fwu->irq_enable(gdev_fwu);
+
+   }
+
+   return count;
+
+}
+
 /*
  * FW update sys interface
  */
+static ssize_t fw_update_flash_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%s\n", FW_BIN_NAME);
+}
+
 static ssize_t fw_update_flash_store(struct device *dev, struct device_attribute *attr,
 				     const char *buf, size_t count)
 {
@@ -2871,34 +3599,29 @@ static ssize_t spi_adjust(struct device *dev, struct device_attribute *attr, con
 
 #endif
 
-#ifdef CONFIG_GCORE_AUTO_UPDATE_FW_HOSTDOWNLOAD
-
 static ssize_t hostdl_idm_set_store(struct device *dev, struct device_attribute *attr,
 				    const char *buf, size_t count)
 {
 	int ret = 0;
 	int enabled = 0;
-	u8 read_data[2] = { 0 };
 
 	ret = kstrtoint(buf, 0, &enabled);
 
 	if (enabled) {
 		GTP_DEBUG("hostdl idm enable:%d", enabled);
-		/* set_hostdownload_idm(enabled);	 */
-		/* gcore_read_fw_version_retry(read_data, sizeof(read_data)); */
-		gcore_idm_read_id(read_data, sizeof(read_data));
+		set_hostdownload_idm(enabled);
 	} else {
 		GTP_ERROR("hostdl idm enable:%d", enabled);
+		set_hostdownload_idm(enabled);
 	}
 
 	return count;
 
 }
 
-#endif
-
 #ifdef CONFIG_ENABLE_GESTURE_WAKEUP
-static ssize_t gesture_en_show(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t gesture_en_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
 {
 	return scnprintf(buf, PAGE_SIZE, "Gesture wakup is %s\n",
 			 gdev_fwu->gesture_wakeup_en ? "enable" : "disable");
@@ -2971,6 +3694,23 @@ static ssize_t rawdata_xy_store(struct device *dev, struct device_attribute *att
 
 }
 
+static ssize_t selftest_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	int ret = -1;
+
+	GTP_DEBUG("self test show");
+
+	ret = gcore_start_mp_test();
+	if (ret) {
+		GTP_DEBUG("selftest failed!");
+	} else {
+		GTP_DEBUG("selftest success!");
+	}
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", ret);
+}
+
 static ssize_t selftest_store(struct device *dev, struct device_attribute *attr,
 			      const char *buf, size_t count)
 {
@@ -2988,11 +3728,177 @@ static ssize_t selftest_store(struct device *dev, struct device_attribute *attr,
 		} else {
 			GTP_DEBUG("selftest success!");
 		}
+
 	} else {
 		GTP_ERROR("self-test enable:%d", enabled);
 	}
 
 	return count;
+}
+
+static ssize_t drvtest_store(struct device *dev, struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+  int ret = 0;
+  int enabled = 0;
+
+  ret = kstrtoint(buf, 0, &enabled);
+
+  if (enabled) {
+	  GTP_DEBUG("drv test enable:%d", enabled);
+  } else {
+	  GTP_ERROR("drv test enable:%d", enabled);
+  }
+
+  return count;
+
+}
+
+static ssize_t drv_ver_show(struct device *dev,
+			  	struct device_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%s\n", TOUCH_DRIVER_RELEASE_VERISON);
+}
+
+static ssize_t fw_ver_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	u8 read_data[4] = { 0 };
+
+	gcore_read_fw_version(read_data, sizeof(read_data));
+
+	return scnprintf(buf, PAGE_SIZE, "FW Ver:%x.%x.%x.%x\n",
+			 read_data[1], read_data[0], read_data[3], read_data[2]);
+}
+
+/* tian add */
+static ssize_t	chip_id_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	u8 chip_id[2]={ 0 };
+	u16 id;
+	gcore_idm_read_id(chip_id,sizeof(chip_id));
+	id = (chip_id[0] << 8)| chip_id[1];
+
+	gcore_request_firmware_update_work(NULL);
+
+	return scnprintf(buf, PAGE_SIZE, "GC%04x\n",id);
+}
+
+static ssize_t notify_event_store(struct device *dev, struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	int ret = 0;
+	int enabled = 0;
+	/* gdev_fwu->notify_state = false; */
+	ret = kstrtoint(buf, 0, &enabled);
+	switch (enabled)
+	{
+		case 1:
+			gcore_fw_event_notify(FW_CHARGER_PLUG);
+			break;
+		case 2:
+			gcore_fw_event_notify(FW_CHARGER_UNPLUG);
+			break;
+		case 3:
+			gcore_fw_event_notify(FW_HEADSET_PLUG);
+			break;
+		case 4:
+			gcore_fw_event_notify(FW_HEADSET_UNPLUG);
+			break;
+
+		default:
+			GTP_DEBUG("echo error");
+			break;
+
+	}
+
+	return count;
+
+
+}
+
+
+
+#ifdef CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD
+/* update_force = 1,forced to update.update_force = 0,check version to update */
+static ssize_t fw_update_force_show(struct device *dev,
+			  	struct device_attribute *attr, char *buf)
+{
+	/* printk(update_force = "%d", update_force); */
+	return scnprintf(buf, PAGE_SIZE, "%d\n", update_force);
+}
+
+
+
+static ssize_t fw_update_force_store(struct device *dev, struct device_attribute *attr,
+			      const char *buf, size_t count)
+{
+	int ret = 0;
+	int enabled = 0;
+
+	ret = kstrtoint(buf, 0, &enabled);
+
+	if (enabled == 1) {
+		update_force = enabled;
+		GTP_ERROR("update_force=%d", enabled);
+	} else if(enabled == 0){
+		update_force = enabled;
+		GTP_ERROR("update_force=%d", enabled);
+	}else{
+		GTP_ERROR("please echo 1 or 0");
+	}
+
+	return count;
+}
+#endif
+
+static ssize_t clear_point_store(struct device *dev, struct device_attribute *attr,
+	const char *buf, size_t count)
+{
+	int ret = 0;
+	int enabled = 0;
+
+	ret = kstrtoint(buf, 0, &enabled);
+
+	if (enabled)
+	{
+		GTP_DEBUG("clear point enable:%d", enabled);
+
+		gcore_touch_release_all_point255(gdev_fwu->input_device);
+
+	}
+	else
+	{
+		GTP_ERROR("clear point enable:%d", enabled);
+	}
+
+	return count;
+
+}
+
+static ssize_t debug_val_store(struct device *dev, struct device_attribute *attr,
+	const char *buf, size_t count)
+{
+	int enabled = 0;
+
+	if (sscanf(buf, "demolog,%d", &enabled) == 1) {
+
+		GTP_DEBUG("set demolog %d", enabled);
+
+		if (enabled) {
+			demolog_enable = true;
+			save_demo_data_to_file();
+		} else {
+			demolog_enable = false;
+		}
+	} else {
+		GTP_ERROR("Wrong parameters.");
+		return -EPERM;
+	}
+
+	return count;
+
 }
 
 #ifdef CONFIG_ENABLE_FW_RAWDATA
@@ -3001,17 +3907,17 @@ static DEVICE_ATTR(fw_mode, 0200, NULL, fw_mode_set_store);
 
 static DEVICE_ATTR(reg, 0200, NULL, fw_reg_rw_store);
 
+static DEVICE_ATTR(page_reg, S_IRUSR | S_IWUSR, page_reg_rw_show, page_reg_rw_store);
+
 #ifdef CONFIG_DEBUG_SPI_SPEED
 static DEVICE_ATTR(spi_speed, 0200, NULL, spi_adjust);
 #endif
 
-static DEVICE_ATTR(fw_update, 0200, NULL, fw_update_flash_store);
+static DEVICE_ATTR(fw_update, 0600, fw_update_flash_show, fw_update_flash_store);
 
 static DEVICE_ATTR(ret_update, S_IRUGO, ret_update_show, NULL);
 
-#ifdef CONFIG_GCORE_AUTO_UPDATE_FW_HOSTDOWNLOAD
-static DEVICE_ATTR(idm, 0200, NULL, hostdl_idm_set_store);
-#endif
+static DEVICE_ATTR(hostdl_idm, 0200, NULL, hostdl_idm_set_store);
 
 #ifdef CONFIG_ENABLE_GESTURE_WAKEUP
 static DEVICE_ATTR(gesture_en, S_IRUSR | S_IWUSR, gesture_en_show, gesture_en_store);
@@ -3021,10 +3927,34 @@ static DEVICE_ATTR(fw_dump, 0200, NULL, fw_dump_store);
 
 static DEVICE_ATTR(rawdata_xy, 0200, NULL, rawdata_xy_store);
 
-static DEVICE_ATTR(selftest, 0200, NULL, selftest_store);
+static DEVICE_ATTR(selftest, 0600, selftest_show, selftest_store);
+
+static DEVICE_ATTR(drvtest, 0200, NULL, drvtest_store);
+
+static DEVICE_ATTR(drv_ver, 0400, drv_ver_show, NULL);
+
+static DEVICE_ATTR(fw_ver, 0400, fw_ver_show, NULL);
+
+/* tian add */
+static DEVICE_ATTR(chip_id, 0400, chip_id_show, NULL);
+
+static DEVICE_ATTR(notify_fw, 0200, NULL, notify_event_store);
+
+
+
+#ifdef CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD
+static DEVICE_ATTR(update_force, 0600, fw_update_force_show, fw_update_force_store);
+#endif
+
+static DEVICE_ATTR(fw_edge, 0600, gcore_fw_edge_protection_show, gcore_fw_edge_protection_store);
+
+static DEVICE_ATTR(clear_point, 0200, NULL, clear_point_store);
+
+static DEVICE_ATTR(debug_val, 0200, NULL, debug_val_store);
 
 static struct device_attribute *gcore_attribute[] = {
 	&dev_attr_reg,
+	&dev_attr_page_reg,
 #ifdef CONFIG_DEBUG_SPI_SPEED
 	&dev_attr_spi_speed,
 #endif
@@ -3033,15 +3963,24 @@ static struct device_attribute *gcore_attribute[] = {
 #endif
 	&dev_attr_fw_update,
 	&dev_attr_ret_update,
-#ifdef CONFIG_GCORE_AUTO_UPDATE_FW_HOSTDOWNLOAD
-	&dev_attr_idm,
-#endif
+	&dev_attr_hostdl_idm,
 #ifdef CONFIG_ENABLE_GESTURE_WAKEUP
 	&dev_attr_gesture_en,
 #endif
 	&dev_attr_fw_dump,
 	&dev_attr_rawdata_xy,
 	&dev_attr_selftest,
+	&dev_attr_drvtest,
+	&dev_attr_drv_ver,
+	&dev_attr_fw_ver,
+	&dev_attr_chip_id,
+	&dev_attr_notify_fw,
+#ifdef CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD
+	&dev_attr_update_force,
+#endif
+	&dev_attr_fw_edge,
+	&dev_attr_clear_point,
+	&dev_attr_debug_val,
 };
 
 int gcore_create_attribute(struct device *dev)
@@ -3061,14 +4000,15 @@ int gcore_create_attribute(struct device *dev)
 
 	return ret;
 }
+
 EXPORT_SYMBOL(gcore_create_attribute);
 
 static int fwu_event_handler(void *p)
 {
 	struct gcore_dev *gdev = (struct gcore_dev *)p;
-	/* struct sched_param param = {.sched_priority = 4 };
+	struct sched_param param = {.sched_priority = 4 };
 
-	 sched_setscheduler(current, SCHED_RR, &param); */
+	sched_setscheduler(current, SCHED_RR, &param);
 	do {
 		set_current_state(TASK_INTERRUPTIBLE);
 
@@ -3081,6 +4021,8 @@ static int fwu_event_handler(void *p)
 		}
 
 		mutex_lock(&gdev->transfer_lock);
+
+		GTP_DEBUG("fwu_event_handler enter.");
 
 		switch (gdev->fw_event) {
 		case FW_UPDATE:
@@ -3104,6 +4046,7 @@ static int fwu_event_handler(void *p)
 			break;
 
 		default:
+			GTP_DEBUG("fwu event default");
 			break;
 		}
 
@@ -3116,6 +4059,8 @@ static int fwu_event_handler(void *p)
 
 int gcore_fw_update_fn_init(struct gcore_dev *gdev)
 {
+	GTP_DEBUG("gcore fw update fn init.");
+
 	gdev_fwu = gdev;
 
 	fwu_thread = kthread_run(fwu_event_handler, gdev, "gcore_fwu");
@@ -3123,14 +4068,10 @@ int gcore_fw_update_fn_init(struct gcore_dev *gdev)
 	if (gcore_create_attribute(&gdev->bus_device->dev)) {
 		GTP_ERROR("update fn create attribute fail");
 	}
-#ifdef CONFIG_GCORE_AUTO_UPDATE_FW_FLASHDOWNLOAD
-	gcore_earse_flash_block01_proc();
-#endif
-	/* No startup hostdownload: this unit's touch IC runs its own flash
-	 * firmware and a PRAM download dead-ends the touch engine (and
-	 * wedges the trigger against later downloads). Manual recovery
-	 * stays available via the fw_update sysfs attribute if a firmware
-	 * bin is ever staged. */
+
+	queue_delayed_work(gdev->fwu_workqueue, &gdev->fwu_work, \
+							msecs_to_jiffies(STARTUP_UPDATE_DELAY_MS));
+
 	return 0;
 }
 
@@ -3139,13 +4080,45 @@ void gcore_fw_update_fn_remove(struct gcore_dev *gdev)
 	int num = 0;
 	int i = 0;
 
+	GTP_INFO("%s enter", __func__);
 	num = (int)ARRAY_SIZE(gcore_attribute);
 
 	for (i = 0; i < num; i++) {
 		device_remove_file(&gdev->bus_device->dev, gcore_attribute[i]);
 	}
-
+	GTP_INFO("%s kthread_stop", __func__);
+	fw_update_fn.event_flag = true;
+	wake_up_interruptible(&gdev->wait);
 	kthread_stop(fwu_thread);
-
+	GTP_INFO("%s exit", __func__);
+	return;
 }
 
+#if 0
+
+static int __init gcore_fw_update_init(void)
+{
+	GTP_DEBUG("gcore_fw_update_init.");
+
+	gcore_new_function_register(&fw_update_fn);
+
+	return 0;
+}
+
+static void __exit gcore_fw_update_exit(void)
+{
+	GTP_DEBUG("gcore_fw_update_exit.");
+
+	gcore_new_function_unregister(&fw_update_fn);
+
+	return;
+}
+
+module_init(gcore_fw_update_init);
+module_exit(gcore_fw_update_exit);
+
+MODULE_AUTHOR("GalaxyCore, Inc.");
+MODULE_DESCRIPTION("GalaxyCore Touch FW Update Module");
+MODULE_LICENSE("GPL");
+
+#endif

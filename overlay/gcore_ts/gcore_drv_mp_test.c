@@ -19,6 +19,21 @@
 #include <linux/seq_file.h>
 #include <linux/proc_fs.h>
 #include <linux/gpio.h>
+#include <linux/firmware.h>
+#include <linux/time.h>
+#include <linux/rtc.h>
+#include <linux/timer.h>
+
+/*
+ * Note.
+ * The below compile option is used to enable the panel type used
+ */
+/* #define CONFIG_ENABLE_PANEL_TYPE_INX */
+/* #define CONFIG_ENABLE_PANEL_TYPE_HKC */
+#define CONFIG_ENABLE_PANEL_TYPE_PANDA
+/* #define CONFIG_ENABLE_PANEL_TYPE_MDT */
+/* #define CONFIG_ENABLE_PANEL_TYPE_HSD */
+
 
 #define MP_TEST_PROC_FILENAME "ts03_selftest"
 
@@ -32,16 +47,50 @@
 #define MP_TEST_OF_ITEM_TEST_SHORT         MP_TEST_OF_PREFIX"test-short"
 #define MP_TEST_OF_TEST_SHORT_CB           MP_TEST_OF_PREFIX"short-cb"
 #define MP_TEST_OF_TEST_SHORT_MIN          MP_TEST_OF_PREFIX"short-min"
-
+#define MP_TEST_OF_ITEM_TEST_RAWDATA       MP_TEST_OF_PREFIX"test-rawdata"
+#define MP_TEST_OF_TEST_RAWDATA_MAX        MP_TEST_OF_PREFIX"rawdata-max"
+#define MP_TEST_OF_TEST_RAWDATA_RANGE      MP_TEST_OF_PREFIX"rawdata-range"
 #define TEST_BEYOND_MAX_LIMIT		0x0001
 #define TEST_BEYOND_MIN_LIMIT		0x0002
 #define TEST_GT_OPEN				0x0200
 #define TEST_GT_SHORT				0x0400
 #define MODULE_TYPE_ERR			0x00080000
+
+#define MP_TEST_DATA_DIR              "/data/vendor/touchpad"
+#define MP_TEST_LOG_FILEPATH          MP_TEST_DATA_DIR"/GCORE_MP_Log"
+extern char gcore_mp_firmware_name[];
+
 #define EMPTY_NUM  4
-int empty_place[EMPTY_NUM] = { 8, 9, -1, -1 };
+
+#if defined(CONFIG_ENABLE_PANEL_TYPE_INX)
+	int empty_place[EMPTY_NUM] = { 0, 17, -1, -1 };
+#elif defined(CONFIG_ENABLE_PANEL_TYPE_HKC)
+	int empty_place[EMPTY_NUM] = { 0, 17, -1, -1 };
+#elif defined(CONFIG_ENABLE_PANEL_TYPE_PANDA)
+	int empty_place[EMPTY_NUM] = { 8, 9, -1, -1 };
+#elif defined(CONFIG_ENABLE_PANEL_TYPE_MDT)
+	int empty_place[EMPTY_NUM] = { 0, 8, 9, 17 };
+#elif defined(CONFIG_ENABLE_PANEL_TYPE_HSD)
+	int empty_place[EMPTY_NUM] = { 8, 9, -1, -1 };
+#else
+	int empty_place[EMPTY_NUM] = { 8, 9, -1, -1 };
+#endif
+
+#define MP_RAWDATA_AVG_TEST  0  /* rawdata avg test no use for now */
+#define MP_RAWDATA_DEC_TEST  0  /* rawdata dec test no use for now */
+
+enum MP_DATA_TYPE {
+	OPEN_DATA,
+	SHORT_DATA,
+	RAW_DATA,
+	RAWDATA_DECH,
+	RAWDATA_DECL,
+	NOISE_DATA,
+};
+
 extern int gcore_tptest_result;
 extern char gcore_mp_test_ini_path[];
+
 DECLARE_COMPLETION(mp_test_complete);
 
 struct gcore_mp_data {
@@ -53,6 +102,8 @@ struct gcore_mp_data {
 	int test_chip_id;
 	int chip_id_test_result;
 	u8 chip_id[2];
+
+	int mp_update_result;
 
 	int test_open;
 	int open_test_result;
@@ -72,11 +123,18 @@ struct gcore_mp_data {
 	int rawdata_test_result;
 	u8 *raw_data;
 	u16 *rawdata_node_val;
+	u16 rawdata_node_max;
+	u16 rawdata_node_min;
 	u16 *rawdata_dec_h;
+	u16 rawdata_dech_max;
+	u16 rawdata_dech_min;
 	u16 *rawdata_dec_l;
+	u16 rawdata_decl_max;
+	u16 rawdata_decl_min;
 	u16 *rawdata_avg_h;
 	u16 *rawdata_avg_l;
-	int rawdata_max;
+	u32 rawdata_range[2];
+	int rawdata_per;
 	int rawdata_range_max;
 	int rawdata_range_min;
 
@@ -86,12 +144,15 @@ struct gcore_mp_data {
 	u8 *noise_data;
 	u16 *noise_node_val;
 
-	struct gcore_dev *gdev;
+	int all_test_result;
 
+	u8 mpbin_ver[4];
+
+	struct gcore_dev *gdev;
 };
 
-struct gcore_mp_data *g_mp_data = NULL;
-struct task_struct *mp_thread = NULL;
+struct gcore_mp_data *g_mp_data;
+struct task_struct *mp_thread;
 
 static int gcore_mp_test_fn_init(struct gcore_dev *gdev);
 static void gcore_mp_test_fn_remove(struct gcore_dev *gdev);
@@ -119,7 +180,7 @@ static void *gcore_seq_next(struct seq_file *m, void *v, loff_t *pos)
 
 static void gcore_seq_stop(struct seq_file *m, void *v)
 {
-
+	return;
 }
 
 static int gcore_seq_show(struct seq_file *m, void *v)
@@ -145,9 +206,9 @@ static int gcore_seq_show(struct seq_file *m, void *v)
 
 	if (mp_data->test_open) {
 		if (mp_data->open_test_result == 0) {
-			seq_puts(m, "Open Test PASS!\n\n");
+			seq_printf(m, "Open Test PASS!\n\n");
 		} else {
-			seq_puts(m, "Open Test FAIL!\n");
+			seq_printf(m, "Open Test FAIL!\n");
 			dump_mp_data_to_seq_file(m, mp_data->open_node_val, rows, cols);
 			seq_putc(m, '\n');
 		}
@@ -156,10 +217,21 @@ static int gcore_seq_show(struct seq_file *m, void *v)
 
 	if (mp_data->test_short) {
 		if (mp_data->short_test_result == 0) {
-			seq_puts(m, "Short Test PASS!\n\n");
+			seq_printf(m, "Short Test PASS!\n\n");
 		} else {
-			seq_puts(m, "Short Test FAIL!\n");
+			seq_printf(m, "Short Test FAIL!\n");
 			dump_mp_data_to_seq_file(m, mp_data->short_node_val, rows, cols);
+			seq_putc(m, '\n');
+		}
+
+	}
+
+	if (mp_data->test_rawdata) {
+		if (mp_data->rawdata_test_result == 0) {
+			seq_printf(m, "Rawrata Test PASD!\n\n");
+		} else {
+			seq_printf(m, "Rawrata Test FAIL!\n");
+			dump_mp_data_to_seq_file(m, mp_data->rawdata_node_val, rows, cols);
 			seq_putc(m, '\n');
 		}
 
@@ -201,6 +273,20 @@ int gcore_parse_mp_test_dt(struct gcore_mp_data *mp_data)
 		of_property_read_u32(np, MP_TEST_OF_TEST_SHORT_MIN, &mp_data->short_min);
 	}
 
+	mp_data->test_rawdata = of_property_read_bool(np, MP_TEST_OF_ITEM_TEST_RAWDATA);
+	if (mp_data->test_rawdata) {
+		of_property_read_u32_array(np, MP_TEST_OF_TEST_RAWDATA_RANGE, mp_data->rawdata_range,
+					  2);
+		of_property_read_u32(np, MP_TEST_OF_TEST_RAWDATA_MAX, &mp_data->rawdata_per);
+		mp_data->rawdata_range_min = mp_data->rawdata_range[0];
+		mp_data->rawdata_range_max = mp_data->rawdata_range[1];
+
+		GTP_DEBUG("rawdata_range_min11 = %d",mp_data->rawdata_range[0]);
+		GTP_DEBUG("rawdata_range_min11 = %d",mp_data->rawdata_range[1]);
+		GTP_DEBUG("rawdata_range_max = %d",mp_data->rawdata_range_min);
+		GTP_DEBUG("rawdata_range_min11 = %d",mp_data->rawdata_range_max);
+		GTP_DEBUG("num = %ld",sizeof(mp_data->rawdata_range));
+	}
 	return 0;
 }
 
@@ -221,7 +307,7 @@ int gcore_parse_mp_test_ini(struct gcore_mp_data *mp_data)
 		if (!buff) {
 			GTP_ERROR("buffer kzalloc fail");
 			return -EPERM;
-		} 
+		}
 		memcpy(buff, fw->data, fw->size);
 		GTP_DEBUG("buff is: %s", buff);
 		release_firmware(fw);
@@ -293,10 +379,10 @@ int gcore_parse_mp_test_ini(struct gcore_mp_data *mp_data)
 		GTP_DEBUG("test-rawdata:%s", mp_data->test_rawdata ? "y" : "n");
 
 		tmp = strstr(buff, "rawdata_max=");
-		ret = sscanf(tmp, "rawdata_max=%d", &mp_data->rawdata_max);
+		ret = sscanf(tmp, "rawdata_max=%d", &mp_data->rawdata_per);
 		if (ret < 0)
 			GTP_ERROR("%s rawdata_max error.\n", __func__);
-		GTP_DEBUG("read rawdata max:%d", mp_data->rawdata_max);
+		GTP_DEBUG("read rawdata max:%d", mp_data->rawdata_per);
 
 		tmp = strstr(buff, "rawdata_range=");
 		ret = sscanf(tmp, "rawdata_range=[%d %d]", &mp_data->rawdata_range_min, &mp_data->rawdata_range_max);
@@ -341,6 +427,7 @@ int gcore_mp_test_int_pin(struct gcore_mp_data *mp_data)
 	gcore_idm_read_reg(0xC0000098, read_buf, sizeof(read_buf));
 	GTP_DEBUG("reg addr: 0xC0000098 read_buf: %x %x %x %x",
 		  read_buf[0], read_buf[1], read_buf[2], read_buf[3]);
+
 	usleep_range(1000, 1100);
 
 	read_buf[0] &= 0x7F;
@@ -381,18 +468,19 @@ fail1:
 
 int gcore_mp_test_chip_id(struct gcore_mp_data *mp_data)
 {
-	u8 buf[3] = { 0 };
+	u8 buf[2] = { 0 };
 
 	GTP_DEBUG("gcore mp test chip id");
 
 	gcore_idm_read_id(buf, sizeof(buf));
 
-	if ((buf[1] == mp_data->chip_id[0]) && (buf[2] == mp_data->chip_id[1])) {
+	if ((buf[0] == mp_data->chip_id[0]) && (buf[1] == mp_data->chip_id[1])) {
 		GTP_DEBUG("gcore mp test chip id match success!");
 		return 0;
+	} else {
+		GTP_DEBUG("gcore mp test chip id match failed!");
+		return -EPERM;
 	}
-	GTP_DEBUG("gcore mp test chip id match failed!");
-	return -EPERM;
 }
 
 int gcore_mp_test_item_open(struct gcore_mp_data *mp_data)
@@ -433,7 +521,8 @@ int gcore_mp_test_item_open(struct gcore_mp_data *mp_data)
 
 	if (!wait_for_completion_interruptible_timeout(&mp_test_complete, 1 * HZ)) {
 		GTP_ERROR("mp test item open timeout.");
-		return -EPERM;
+		mp_test_fn.wait_int = false;
+		return EPERM;
 	}
 
 	opendata = mp_data->open_data;
@@ -474,7 +563,6 @@ int gcore_mp_test_item_open_reply(u8 *buf, int len)
 {
 	int ret = 0;
 
-	GTP_INFO("gcore_mp_test_item_open_reply");
 	if (buf == NULL) {
 		GTP_ERROR("receive buffer is null!");
 		return -EPERM;
@@ -492,6 +580,11 @@ int gcore_mp_test_item_open_reply(u8 *buf, int len)
 	return 0;
 }
 
+void mp_wait_int_set_fail(void)
+{
+    mp_test_fn.wait_int = false;
+}
+
 int gcore_mp_test_item_short(struct gcore_mp_data *mp_data)
 {
 	u8 cb_high = (u8) (mp_data->short_cb >> 8);
@@ -505,7 +598,7 @@ int gcore_mp_test_item_short(struct gcore_mp_data *mp_data)
 	u16 node_data = 0;
 	bool jump = 0;
 
-	GTP_INFO("gcore mp test item short");
+	GTP_DEBUG("gcore mp test item short");
 
 	gdev->fw_event = FW_READ_SHORT;
 	gdev->firmware = mp_data->short_data;
@@ -530,7 +623,8 @@ int gcore_mp_test_item_short(struct gcore_mp_data *mp_data)
 
 	if (!wait_for_completion_interruptible_timeout(&mp_test_complete, 1 * HZ)) {
 		GTP_ERROR("mp test item short timeout.");
-		return -EPERM;
+		mp_test_fn.wait_int = false;
+		return EPERM;
 	}
 
 	shortdata = mp_data->short_data;
@@ -545,7 +639,7 @@ int gcore_mp_test_item_short(struct gcore_mp_data *mp_data)
 
 	for (i = 0; i < RAW_DATA_SIZE / 2; i++) {
 		node_data = mp_data->short_node_val[i];
-		/* GTP_DEBUG("i:%d short node_data:%d", i, node_data); */
+/* GTP_DEBUG("i:%d short node_data:%d", i, node_data); */
 		jump = 0;
 
 		for (j = 0; j < EMPTY_NUM; j++) {
@@ -576,7 +670,7 @@ int gcore_mp_test_item_rawdata(struct gcore_mp_data *mp_data)
 	int i = 0;
 	int j = 0;
 	u16 node_data = 0;
-#ifdef MP_RAWDATA_DEC_TEST
+#if MP_RAWDATA_DEC_TEST
 	u16 *rndata = mp_data->rawdata_node_val;
 	u16 *dec_value = NULL;
 	int rows = RAWDATA_ROW;
@@ -608,9 +702,10 @@ int gcore_mp_test_item_rawdata(struct gcore_mp_data *mp_data)
 
 	mutex_unlock(&gdev->transfer_lock);
 
-	if (!wait_for_completion_interruptible_timeout(&mp_test_complete, 1 * HZ)) {
-		GTP_ERROR("mp test item short timeout.");
-		return -EPERM;
+	if (!wait_for_completion_interruptible_timeout(&mp_test_complete, 3 * HZ)) {
+		GTP_ERROR("mp test item rawdata timeout.");
+		mp_test_fn.wait_int = false;
+		return EPERM;
 	}
 
 	rawdata = mp_data->raw_data;
@@ -622,8 +717,20 @@ int gcore_mp_test_item_rawdata(struct gcore_mp_data *mp_data)
 
 		rawdata += 2;
 	}
+	/* cal rawdata node max and min */
+	mp_data->rawdata_node_max = mp_data->rawdata_node_val[0];
+	mp_data->rawdata_node_min = mp_data->rawdata_node_val[0];
+	for (i = 0; i < RAW_DATA_SIZE / 2; i++) {
+		if (mp_data->rawdata_node_val[i] > mp_data->rawdata_node_max) {
+			mp_data->rawdata_node_max = mp_data->rawdata_node_val[i];
+		}
 
-#ifdef MP_RAWDATA_DEC_TEST
+		if (mp_data->rawdata_node_val[i] < mp_data->rawdata_node_min) {
+			mp_data->rawdata_node_min = mp_data->rawdata_node_val[i];
+		}
+	}
+
+#if MP_RAWDATA_DEC_TEST
 	dec_value = mp_data->rawdata_dec_h;
 	rndata = mp_data->rawdata_node_val;
 	for (j = 0; j < rows; j++) {
@@ -634,11 +741,23 @@ int gcore_mp_test_item_rawdata(struct gcore_mp_data *mp_data)
 				dec_value[i] = abs(rndata[i + 1] - rndata[i]) * 100 / rndata[i];
 			}
 
-			/* GTP_DEBUG("rawdata cal i:%d val:%d", i, dec_value); */
+/* GTP_DEBUG("rawdata cal i:%d val:%d", i, dec_value); */
 		}
 
 		rndata += cols;
 		dec_value += cols;
+	}
+	/* cal rawdata node max and min */
+	mp_data->rawdata_dech_max = mp_data->rawdata_dec_h[0];
+	mp_data->rawdata_dech_min = mp_data->rawdata_dec_h[0];
+	for (i = 0; i < RAW_DATA_SIZE / 2; i++) {
+		if (mp_data->rawdata_dec_h[i] > mp_data->rawdata_dech_max) {
+			mp_data->rawdata_dech_max = mp_data->rawdata_dec_h[i];
+		}
+
+		if (mp_data->rawdata_dec_h[i] < mp_data->rawdata_dech_min) {
+			mp_data->rawdata_dech_min = mp_data->rawdata_dec_h[i];
+		}
 	}
 
 	dec_value = mp_data->rawdata_dec_l;
@@ -651,11 +770,25 @@ int gcore_mp_test_item_rawdata(struct gcore_mp_data *mp_data)
 				dec_value[i*cols+j] = abs(rndata[i*cols+j+cols] - rndata[i*cols+j]) * 100 / rndata[i*cols+j];
 			}
 
-			/* GTP_DEBUG("rawdata cal i:%d val:%d", i, dec_value); */
+/* GTP_DEBUG("rawdata cal i:%d val:%d", i, dec_value); */
 		}
 
 	}
+	/* cal rawdata node max and min */
+	mp_data->rawdata_decl_max = mp_data->rawdata_dec_l[0];
+	mp_data->rawdata_decl_min = mp_data->rawdata_dec_l[0];
+	for (i = 0; i < RAW_DATA_SIZE / 2; i++) {
+		if (mp_data->rawdata_dec_l[i] > mp_data->rawdata_decl_max) {
+			mp_data->rawdata_decl_max = mp_data->rawdata_dec_l[i];
+		}
 
+		if (mp_data->rawdata_dec_l[i] < mp_data->rawdata_decl_min) {
+			mp_data->rawdata_decl_min = mp_data->rawdata_dec_l[i];
+		}
+	}
+#endif
+
+#if MP_RAWDATA_AVG_TEST
 	dec_value = mp_data->rawdata_avg_h;
 	rndata = mp_data->rawdata_node_val;
 	for (j = 0; j < rows; j++) {
@@ -663,7 +796,6 @@ int gcore_mp_test_item_rawdata(struct gcore_mp_data *mp_data)
 		int min = 0;
 		int avg = 0;
 		int sum = 0;
-
 		for (i = 0; i < cols; i++) {
 			if (rndata[i] > rndata[max]) {
 				max = i;
@@ -674,7 +806,7 @@ int gcore_mp_test_item_rawdata(struct gcore_mp_data *mp_data)
 			}
 		}
 
-		/* GTP_DEBUG("avgh max:%d min:%d", max, min); */
+/* GTP_DEBUG("avgh max:%d min:%d", max, min); */
 
 		if (max == min) {
 			avg = rndata[max];
@@ -687,13 +819,13 @@ int gcore_mp_test_item_rawdata(struct gcore_mp_data *mp_data)
 			avg = sum/(cols-2);
 		}
 
-	/* GTP_DEBUG("avgh sum:%d avg:%d", sum, avg); */
+/* GTP_DEBUG("avgh sum:%d avg:%d", sum, avg); */
 
 		for (i = 0; i < cols; i++) {
 			dec_value[i] = abs(avg - rndata[i]) * 100 / rndata[i];
 		}
 
-	/*GTP_DEBUG("rawdata cal i:%d val:%d", i, dec_value); */
+/* GTP_DEBUG("rawdata cal i:%d val:%d", i, dec_value); */
 
 
 		rndata += cols;
@@ -708,7 +840,6 @@ int gcore_mp_test_item_rawdata(struct gcore_mp_data *mp_data)
 		int min = j;
 		int avg = 0;
 		int sum = 0;
-
 		for (i = 0; i < rows; i++) {
 			if (rndata[i*cols+j] > rndata[max]) {
 				max = i*cols+j;
@@ -719,7 +850,7 @@ int gcore_mp_test_item_rawdata(struct gcore_mp_data *mp_data)
 			}
 		}
 
-		/* GTP_DEBUG("avgl max:%d min:%d", max/18, min/18); */
+/* GTP_DEBUG("avgl max:%d min:%d", max/18, min/18); */
 
 		if (max == min) {
 			avg = rndata[max];
@@ -732,20 +863,19 @@ int gcore_mp_test_item_rawdata(struct gcore_mp_data *mp_data)
 			avg = sum/(rows-2);
 		}
 
-		/*	GTP_DEBUG("avgl sum:%d avg:%d", sum, avg); */
+/* GTP_DEBUG("avgl sum:%d avg:%d", sum, avg); */
 
 		for (i = 0; i < rows; i++) {
 			dec_value[i*cols+j] = abs(avg - rndata[i*cols+j]) * 100 / rndata[i*cols+j];
 		}
 
-		/* GTP_DEBUG("rawdata cal i:%d val:%d", i, dec_value); */
+/* GTP_DEBUG("rawdata cal i:%d val:%d", i, dec_value); */
 	}
 #endif
 
 	for (i = 0; i < RAW_DATA_SIZE / 2; i++) {
 
 		jump = 0;
-
 		for (j = 0; j < EMPTY_NUM; j++) {
 			if (i == empty_place[j]) {
 				GTP_DEBUG("empty node %d need not judge.", i);
@@ -761,32 +891,36 @@ int gcore_mp_test_item_rawdata(struct gcore_mp_data *mp_data)
 
 				return -EPERM;
 			}
-
-#ifdef MP_RAWDATA_DEC_TEST
+#if MP_RAWDATA_DEC_TEST
 			node_data = mp_data->rawdata_dec_h[i];
-			if (node_data > mp_data->rawdata_max) {
-				GTP_ERROR("dech %d n_data %d > rawdata_max test fail!", i, node_data);
+			if (node_data > mp_data->rawdata_per) {
+				GTP_ERROR("dech %d %d n_data %d > rawdata_per test fail!",
+					i, mp_data->rawdata_node_val[i], node_data);
 
 				return -EPERM;
 			}
 
 			node_data = mp_data->rawdata_dec_l[i];
-			if (node_data > mp_data->rawdata_max) {
-				GTP_ERROR("decl %d n_data %d > rawdata_max test fail!", i, node_data);
+			if (node_data > mp_data->rawdata_per) {
+				GTP_ERROR("decl %d %d n_data %d > rawdata_per test fail!",
+					i, mp_data->rawdata_node_val[i], node_data);
 
 				return -EPERM;
 			}
-
+#endif
+#if MP_RAWDATA_AVG_TEST
 			node_data = mp_data->rawdata_avg_h[i];
-			if (node_data > mp_data->rawdata_max) {
-				GTP_ERROR("avgh %d n_data %d > rawdata_max test fail!", i, node_data);
+			if (node_data > mp_data->rawdata_per) {
+				GTP_ERROR("avgh %d %d n_data %d > rawdata_per test fail!",
+					i, mp_data->rawdata_node_val[i], node_data);
 
 				return -EPERM;
 			}
 
 			node_data = mp_data->rawdata_avg_l[i];
-			if (node_data > mp_data->rawdata_max) {
-				GTP_ERROR("avgl %d n_data %d > rawdata_max test fail!", i, node_data);
+			if (node_data > mp_data->rawdata_per) {
+				GTP_ERROR("avgl %d %d n_data %d > rawdata_per test fail!",
+					i, mp_data->rawdata_node_val[i], node_data);
 
 				return -EPERM;
 			}
@@ -799,7 +933,7 @@ int gcore_mp_test_item_rawdata(struct gcore_mp_data *mp_data)
 
 int gcore_mp_test_item_noise(struct gcore_mp_data *mp_data)
 {
-	u8 cmd[] = { 0x40, 0xAA, 0x00, 0x64, 0x73, 0x71, 0x00, 0x00, 0x04 };
+	u8 cmd[] = { 0x40, 0xAA, 0x00, 0x32, 0x73, 0x71, 0x00, 0x00, 0x04 };
 	struct gcore_dev *gdev = mp_data->gdev;
 	u8 *noisedata = NULL;
 	int ret = 0;
@@ -877,10 +1011,9 @@ int gcore_mp_test_item_noise(struct gcore_mp_data *mp_data)
 static int mp_test_event_handler(void *p)
 {
 	struct gcore_dev *gdev = (struct gcore_dev *)p;
-	/*struct sched_param param = {.sched_priority = 4 };
+	struct sched_param param = {.sched_priority = 4 };
 
-	sched_setscheduler(current, SCHED_RR, &param);*/
-
+	sched_setscheduler(current, SCHED_RR, &param);
 	do {
 		set_current_state(TASK_INTERRUPTIBLE);
 
@@ -894,6 +1027,8 @@ static int mp_test_event_handler(void *p)
 
 		mutex_lock(&gdev->transfer_lock);
 
+		GTP_DEBUG("mp_test_event_handler enter.");
+
 		switch (gdev->fw_event) {
 		case FW_READ_OPEN:
 			gcore_mp_test_item_open_reply(gdev->firmware, gdev->fw_xfer);
@@ -906,8 +1041,11 @@ static int mp_test_event_handler(void *p)
 		case FW_READ_RAWDATA:
 			gcore_mp_test_item_open_reply(gdev->firmware, gdev->fw_xfer);
 			break;
+
 		case FW_READ_NOISE:
 			gcore_mp_test_item_open_reply(gdev->firmware, gdev->fw_xfer);
+			break;
+
 		default:
 			break;
 		}
@@ -928,19 +1066,23 @@ int gcore_alloc_mp_test_mem(struct gcore_mp_data *mp_data)
 #else
 			mp_data->open_data = kzalloc(RAW_DATA_SIZE, GFP_KERNEL);
 #endif
-			if (!mp_data->open_data) {
+			if (IS_ERR_OR_NULL(mp_data->open_data)) {
 				GTP_ERROR("allocate mp test open_data mem fail!");
 				return -ENOMEM;
 			}
 		}
 
+		memset(mp_data->open_data, 0, RAW_DATA_SIZE);
+
 		if (mp_data->open_node_val == NULL) {
-			mp_data->open_node_val = kzalloc(RAW_DATA_SIZE, GFP_KERNEL);
-			if (!mp_data->open_node_val) {
+			mp_data->open_node_val = (u16 *) kzalloc(RAW_DATA_SIZE, GFP_KERNEL);
+			if (IS_ERR_OR_NULL(mp_data->open_node_val)) {
 				GTP_ERROR("allocate mp test open_node_val mem fail!");
 				return -ENOMEM;
 			}
 		}
+
+		memset(mp_data->open_node_val, 0, RAW_DATA_SIZE);
 
 	}
 
@@ -951,19 +1093,24 @@ int gcore_alloc_mp_test_mem(struct gcore_mp_data *mp_data)
 #else
 			mp_data->short_data = kzalloc(RAW_DATA_SIZE, GFP_KERNEL);
 #endif
-			if (!mp_data->short_data) {
+			if (IS_ERR_OR_NULL(mp_data->short_data)) {
 				GTP_ERROR("allocate mp test short_data mem fail!");
 				return -ENOMEM;
 			}
 		}
 
+		memset(mp_data->short_data, 0, RAW_DATA_SIZE);
+
 		if (mp_data->short_node_val == NULL) {
-			mp_data->short_node_val = kzalloc(RAW_DATA_SIZE, GFP_KERNEL);
-			if (!mp_data->short_node_val) {
+			mp_data->short_node_val = (u16 *) kzalloc(RAW_DATA_SIZE, GFP_KERNEL);
+			if (IS_ERR_OR_NULL(mp_data->short_node_val)) {
 				GTP_ERROR("allocate mp test short_node_val mem fail!");
 				return -ENOMEM;
 			}
 		}
+
+		memset(mp_data->short_node_val, 0, RAW_DATA_SIZE);
+
 	}
 
 	if (mp_data->test_rawdata) {
@@ -979,6 +1126,8 @@ int gcore_alloc_mp_test_mem(struct gcore_mp_data *mp_data)
 			}
 		}
 
+		memset(mp_data->raw_data, 0, RAW_DATA_SIZE);
+
 		if (mp_data->rawdata_node_val == NULL) {
 			mp_data->rawdata_node_val = (u16 *) kzalloc(RAW_DATA_SIZE, GFP_KERNEL);
 			if (IS_ERR_OR_NULL(mp_data->rawdata_node_val)) {
@@ -987,7 +1136,9 @@ int gcore_alloc_mp_test_mem(struct gcore_mp_data *mp_data)
 			}
 		}
 
-#ifdef MP_RAWDATA_DEC_TEST
+		memset(mp_data->rawdata_node_val, 0, RAW_DATA_SIZE);
+
+#if MP_RAWDATA_DEC_TEST
 		if (mp_data->rawdata_dec_h == NULL) {
 			mp_data->rawdata_dec_h = (u16 *) kzalloc(RAW_DATA_SIZE, GFP_KERNEL);
 			if (IS_ERR_OR_NULL(mp_data->rawdata_dec_h)) {
@@ -995,6 +1146,8 @@ int gcore_alloc_mp_test_mem(struct gcore_mp_data *mp_data)
 				return -ENOMEM;
 			}
 		}
+
+		memset(mp_data->rawdata_dec_h, 0, RAW_DATA_SIZE);
 
 		if (mp_data->rawdata_dec_l == NULL) {
 			mp_data->rawdata_dec_l = (u16 *) kzalloc(RAW_DATA_SIZE, GFP_KERNEL);
@@ -1004,6 +1157,10 @@ int gcore_alloc_mp_test_mem(struct gcore_mp_data *mp_data)
 			}
 		}
 
+		memset(mp_data->rawdata_dec_l, 0, RAW_DATA_SIZE);
+#endif
+
+#if MP_RAWDATA_AVG_TEST
 		if (mp_data->rawdata_avg_h == NULL) {
 			mp_data->rawdata_avg_h = (u16 *) kzalloc(RAW_DATA_SIZE, GFP_KERNEL);
 			if (IS_ERR_OR_NULL(mp_data->rawdata_avg_h)) {
@@ -1012,6 +1169,8 @@ int gcore_alloc_mp_test_mem(struct gcore_mp_data *mp_data)
 			}
 		}
 
+		memset(mp_data->rawdata_avg_h, 0, RAW_DATA_SIZE);
+
 		if (mp_data->rawdata_avg_l == NULL) {
 			mp_data->rawdata_avg_l = (u16 *) kzalloc(RAW_DATA_SIZE, GFP_KERNEL);
 			if (IS_ERR_OR_NULL(mp_data->rawdata_avg_l)) {
@@ -1019,6 +1178,8 @@ int gcore_alloc_mp_test_mem(struct gcore_mp_data *mp_data)
 				return -ENOMEM;
 			}
 		}
+
+		memset(mp_data->rawdata_avg_l, 0, RAW_DATA_SIZE);
 #endif
 	}
 
@@ -1036,7 +1197,7 @@ int gcore_alloc_mp_test_mem(struct gcore_mp_data *mp_data)
 		}
 
 		memset(mp_data->noise_data, 0, RAW_DATA_SIZE);
-		
+
 		if (mp_data->noise_node_val == NULL) {
 			mp_data->noise_node_val = (u16 *) kzalloc(RAW_DATA_SIZE, GFP_KERNEL);
 			if (IS_ERR_OR_NULL(mp_data->noise_node_val)) {
@@ -1046,8 +1207,9 @@ int gcore_alloc_mp_test_mem(struct gcore_mp_data *mp_data)
 		}
 
 		memset(mp_data->noise_node_val, 0, RAW_DATA_SIZE);
-		
+
 	}
+
 	return 0;
 }
 
@@ -1076,7 +1238,7 @@ void gcore_free_mp_test_mem(struct gcore_mp_data *mp_data)
 		kfree(mp_data->rawdata_node_val);
 		mp_data->rawdata_node_val = NULL;
 
-#ifdef MP_RAWDATA_DEC_TEST
+#if MP_RAWDATA_DEC_TEST
 		kfree(mp_data->rawdata_dec_h);
 		mp_data->rawdata_dec_h = NULL;
 
@@ -1100,17 +1262,40 @@ void gcore_free_mp_test_mem(struct gcore_mp_data *mp_data)
 	}
 }
 
+static int firstline = 1;
 int dump_mp_data_row_to_buffer(char *buf, size_t size, const u16 *data,
 			       int cols, const char *prefix, const char *suffix, char seperator)
 {
-	int c, count = 0;
+	int c, j, hole, count = 0;
 
 	if (prefix) {
 		count += scnprintf(buf, size, "%s", prefix);
 	}
 
-	for (c = 0; c < cols; c++) {
-		count += scnprintf(buf + count, size - count, "%4u%c ", data[c], seperator);
+		for (c = 0; c < cols; c++) {
+		if (!firstline) {
+			count += scnprintf(buf + count, size - count, "%4u%c ", data[c], seperator);
+		}else{
+			/* GTP_DEBUG("this is first line."); */
+			for (j = 0; j < EMPTY_NUM; j++) {
+				if (c == empty_place[j]) {
+					/* GTP_DEBUG("empty node %d is blank.", empty_place[j]); */
+					hole = 1;
+					break;
+				}else{
+					/* GTP_DEBUG("empty node is normal."); */
+					hole = 0;
+				}
+			}
+
+			if(hole == 1){
+				count += scnprintf(buf + count, size - count, " %c", seperator);
+				GTP_DEBUG("empty node %d is blank.", empty_place[j]);
+			}else if(hole == 0){
+				count += scnprintf(buf + count, size - count, "%4u%c ", data[c], seperator);
+			}
+
+		}
 	}
 
 	if (suffix) {
@@ -1121,23 +1306,706 @@ int dump_mp_data_row_to_buffer(char *buf, size_t size, const u16 *data,
 
 }
 
-int dump_mp_data_to_buffer(const u16 *data, int rows, int cols)
+int dump_diff_data_row_to_buffer(char *buf, size_t size, const s16 *data,
+			       int cols, const char *prefix, const char *suffix, char seperator)
 {
-	int r = 0;
+	int c, count = 0;
 
-	const u16 *n_val = data;
-
-	GTP_DEBUG("dump mp data to buffer: row: %d	col: %d", rows, cols);
-
-	for (r = 0; r < rows; r++) {
-		char linebuf[256];
-		int len;
-		len = dump_mp_data_row_to_buffer(linebuf, sizeof(linebuf), n_val, cols, NULL, "\n", ',');
-		n_val += cols;
-		tpd_copy_to_tp_firmware_data(linebuf);
+	if (prefix) {
+		count += scnprintf(buf, size, "%s", prefix);
 	}
 
+	for (c = 0; c < cols; c++) {
+		count += scnprintf(buf + count, size - count, "%4d%c ", data[c], seperator);
+	}
+
+	if (suffix) {
+		count += scnprintf(buf + count, size - count, "%s", suffix);
+	}
+
+	return count;
+
+}
+
+int dump_demo_data_row_to_buffer(char *buf, size_t size, const u8 *data,
+				  int cols, const char *prefix, const char *suffix, char seperator)
+{
+   int c, count = 0;
+
+   if (prefix) {
+	   count += scnprintf(buf, size, "%s", prefix);
+   }
+
+   for (c = 0; c < cols; c++) {
+	   count += scnprintf(buf + count, size - count, "%02x%c", data[c], seperator);
+   }
+
+   if (suffix) {
+	   count += scnprintf(buf + count, size - count, "%s", suffix);
+   }
+
+   return count;
+
+}
+
+int dump_excel_head_row_to_buffer(char *buf, size_t size,
+			int cols, const char *prefix, const char *suffix, char seperator)
+{
+	int c, count = 0;
+
+	if (prefix) {
+		count += scnprintf(buf, size, "%s", prefix);
+	}
+
+	for (c = 1; c <= cols; c++) {
+		count += scnprintf(buf + count, size - count, "X%d%c ", c, seperator);
+	}
+
+	if (suffix) {
+		count += scnprintf(buf + count, size - count, "%s", suffix);
+	}
+
+	return count;
+
+}
+
+#ifdef GKI_CHECK
+int dump_mp_data_to_file(const u16 *data, int rows, int cols, enum MP_DATA_TYPE types)
+{
+	int r = 0;
+	const u16 *n_val = data;
+	char linebuf[256];
+	char y_prefix[10];
+	char topic[30];
+	int len;
+
+	switch (types) {
+		case RAW_DATA:
+			GTP_DEBUG("dump Raw data to csv file");
+			strncpy(topic, "Rawdata:, ", sizeof(topic));
+			break;
+
+		case RAWDATA_DECH:
+			strncpy(topic, "rawdata_per_h:, ", sizeof(topic));
+			break;
+
+		case RAWDATA_DECL:
+			strncpy(topic, "rawdata_per_l:, ", sizeof(topic));
+			break;
+
+		case NOISE_DATA:
+			GTP_DEBUG("dump Noise data to csv file");
+			strncpy(topic, "Noise:, ", sizeof(topic));
+			break;
+
+		case OPEN_DATA:
+			GTP_DEBUG("dump Open data to csv file");
+			strncpy(topic, "Open:, ", sizeof(topic));
+			break;
+
+		case SHORT_DATA:
+			GTP_DEBUG("dump Short data to csv file");
+			strncpy(topic, "Short:, ", sizeof(topic));
+			break;
+
+		default:
+			strncpy(topic, "Rawdata:, ", sizeof(topic));
+			break;
+	}
+
+	len = dump_excel_head_row_to_buffer(linebuf, sizeof(linebuf),
+						cols, topic, "\n", ',');
+	tpd_copy_to_tp_firmware_data(linebuf);
+
+	for (r = 0; r < rows; r++) {
+		scnprintf(y_prefix, sizeof(y_prefix), "Y%d, ", r+1);
+		len = dump_mp_data_row_to_buffer(linebuf, sizeof(linebuf),
+						n_val, cols, y_prefix, "\n", ',');
+		firstline = 0;
+		tpd_copy_to_tp_firmware_data(linebuf);
+		n_val += cols;
+	}
+	firstline = 1;
+
+
+	switch (types) {
+	case RAW_DATA:
+		len = scnprintf(linebuf, sizeof(linebuf), "Max:, %4u, ,Min:, %4u, ,Threshold:, %4u, %4u, \n",
+				g_mp_data->rawdata_node_max, g_mp_data->rawdata_node_min, g_mp_data->rawdata_range_min,
+				g_mp_data->rawdata_range_max);
+		break;
+
+	case RAWDATA_DECH:
+		len = scnprintf(linebuf, sizeof(linebuf),
+				"Max:, %4u, ,Min:, %4u, ,Threshold:, %4u%%, \n",
+				g_mp_data->rawdata_dech_max, g_mp_data->rawdata_dech_min,
+				g_mp_data->rawdata_per);
+		break;
+
+	case RAWDATA_DECL:
+		len = scnprintf(linebuf, sizeof(linebuf),
+				"Max:, %4u, ,Min:, %4u, ,Threshold:, %4u%%, \n",
+				g_mp_data->rawdata_decl_max, g_mp_data->rawdata_decl_min,
+				g_mp_data->rawdata_per);
+		break;
+
+	case OPEN_DATA:
+		len = scnprintf(linebuf, sizeof(linebuf), "Threshold:, %4u, \n", \
+				g_mp_data->open_min);
+		break;
+
+	case SHORT_DATA:
+		len = scnprintf(linebuf, sizeof(linebuf), "Threshold:, %4u, \n", \
+				g_mp_data->short_min);
+		break;
+
+	case NOISE_DATA:
+		len = scnprintf(linebuf, sizeof(linebuf), "Threshold:, %4u, \n", \
+				g_mp_data->peak_to_peak);
+		break;
+
+	default:
+		len = 0;
+		break;
+	}
+	tpd_copy_to_tp_firmware_data(linebuf);
+	tpd_copy_to_tp_firmware_data("\n");
 	return 0;
+
+}
+int dump_mp_info_to_file(void)
+{
+	static char linebuf[256];
+	int len;
+#if defined(CONFIG_ENABLE_CHIP_TYPE_GC7371)
+	u8 icname[10] = "GC7371";
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7271)
+	u8 icname[10] = "GC7271";
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202)
+	u8 icname[10] = "GC7202";
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
+	u8 icname[10] = "GC7372";
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
+	u8 icname[10] = "GC7302";
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
+	u8 icname[10] = "GC7202H";
+#endif
+#if defined(CONFIG_TOUCH_DRIVER_INTERFACE_I2C)
+	u8 intef[5] = "I2C";
+	u8 speed[10];
+#elif defined(CONFIG_TOUCH_DRIVER_INTERFACE_SPI)
+	u8 intef[5] = "SPI";
+	u8 speed[10];
+#endif
+
+	len = scnprintf(linebuf, sizeof(linebuf), "INFO:, \n");
+	tpd_copy_to_tp_firmware_data(linebuf);
+	len = scnprintf(linebuf, sizeof(linebuf), "GTP Driver version:, V%s\n", TOUCH_DRIVER_RELEASE_VERISON);
+	tpd_copy_to_tp_firmware_data(linebuf);
+	len = scnprintf(linebuf, sizeof(linebuf), "MP bin version:, 0x%02x%02x.0x%02x%02x\n",
+		g_mp_data->mpbin_ver[1], g_mp_data->mpbin_ver[0],g_mp_data->mpbin_ver[3],g_mp_data->mpbin_ver[2]);
+	tpd_copy_to_tp_firmware_data(linebuf);
+	len = scnprintf(linebuf, sizeof(linebuf), "IC name:, %s\n", icname);
+	tpd_copy_to_tp_firmware_data(linebuf);
+	len = scnprintf(linebuf, sizeof(linebuf), "Interface mode:, %s\n", intef);
+	tpd_copy_to_tp_firmware_data(linebuf);
+#if defined(CONFIG_TOUCH_DRIVER_INTERFACE_I2C)
+		scnprintf(speed, sizeof(speed), "400K");
+#elif defined(CONFIG_TOUCH_DRIVER_INTERFACE_SPI)
+		scnprintf(speed, sizeof(speed), "%u", g_mp_data->gdev->bus_device->max_speed_hz);
+#endif
+	len = scnprintf(linebuf, sizeof(linebuf), "Interface speed:, %s\n", speed);
+	tpd_copy_to_tp_firmware_data(linebuf);
+	tpd_copy_to_tp_firmware_data("\n");
+	len = scnprintf(linebuf, sizeof(linebuf), "RESULT:, \n");
+	tpd_copy_to_tp_firmware_data(linebuf);
+	len = scnprintf(linebuf, sizeof(linebuf), "MP Test result:, %s\n", \
+					g_mp_data->all_test_result ? "FAIL" : "PASS");
+	tpd_copy_to_tp_firmware_data(linebuf);
+	tpd_copy_to_tp_firmware_data("\n");
+	len = scnprintf(linebuf, sizeof(linebuf), "1-Chip Test Result:, %s\n", \
+					g_mp_data->chip_id_test_result ? "FAIL" : "PASS");
+	tpd_copy_to_tp_firmware_data(linebuf);
+	len = scnprintf(linebuf, sizeof(linebuf), "2-MPbin Test Result:, %s\n", \
+					g_mp_data->mp_update_result ? "FAIL" : "PASS");
+	tpd_copy_to_tp_firmware_data(linebuf);
+
+	len = scnprintf(linebuf, sizeof(linebuf), "3-Open Test Result:, %s, %s\n", \
+					g_mp_data->open_test_result ? "FAIL" : "PASS", \
+					(g_mp_data->open_test_result > 0) ? "TIMEOUT" : "");
+	tpd_copy_to_tp_firmware_data(linebuf);
+	len = scnprintf(linebuf, sizeof(linebuf), "4-Short Test Result:, %s, %s\n", \
+					g_mp_data->short_test_result ? "FAIL" : "PASS", \
+					(g_mp_data->short_test_result > 0) ? "TIMEOUT" : "");
+	tpd_copy_to_tp_firmware_data(linebuf);
+
+	len = scnprintf(linebuf, sizeof(linebuf), "5-Rawdata Test Result:, %s, %s\n", \
+					g_mp_data->rawdata_test_result ? "FAIL" : "PASS", \
+					(g_mp_data->rawdata_test_result > 0) ? "TIMEOUT" : "");
+	tpd_copy_to_tp_firmware_data(linebuf);
+
+	len = scnprintf(linebuf, sizeof(linebuf), "6-Noise Test Result:, %s, %s\n", \
+					g_mp_data->noise_test_result ? "FAIL" : "PASS", \
+					(g_mp_data->noise_test_result > 0) ? "TIMEOUT" : "");
+
+	return 0;
+
+}
+#else
+static loff_t pos;
+int dump_mp_data_to_csv_file(const char *filepath, int flags,
+			const u16 *data, int rows, int cols, enum MP_DATA_TYPE types)
+{
+	struct file *file;
+	int r = 0;
+	int ret = 0;
+	const u16 *n_val = data;
+	char linebuf[256];
+	char y_prefix[10];
+	char topic[30];
+	int len;
+
+	file = filp_open(filepath, flags, 0666);
+	if (IS_ERR(file)) {
+		GTP_ERROR("Open file %s failed %ld", filepath, PTR_ERR(file));
+		return -EPERM;
+	}
+	switch (types) {
+		case RAW_DATA:
+			GTP_DEBUG("dump Raw data to csv file");
+			strncpy(topic, "Rawdata:, ", sizeof(topic));
+			break;
+
+		case RAWDATA_DECH:
+			strncpy(topic, "rawdata_per_h:, ", sizeof(topic));
+			break;
+
+		case RAWDATA_DECL:
+			strncpy(topic, "rawdata_per_l:, ", sizeof(topic));
+			break;
+
+		case NOISE_DATA:
+			GTP_DEBUG("dump Noise data to csv file");
+			strncpy(topic, "Noise:, ", sizeof(topic));
+			break;
+
+		case OPEN_DATA:
+			GTP_DEBUG("dump Open data to csv file");
+			strncpy(topic, "Open:, ", sizeof(topic));
+			break;
+
+		case SHORT_DATA:
+			GTP_DEBUG("dump Short data to csv file");
+			strncpy(topic, "Short:, ", sizeof(topic));
+			break;
+
+		default:
+			strncpy(topic, "Rawdata:, ", sizeof(topic));
+			break;
+	}
+
+	len = dump_excel_head_row_to_buffer(linebuf, sizeof(linebuf),
+						cols, topic, "\n", ',');
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, linebuf, len, &pos);
+#else
+	ret = kernel_write(file, linebuf, len, pos);
+	pos += len;
+#endif
+
+
+	for (r = 0; r < rows; r++) {
+		scnprintf(y_prefix, sizeof(y_prefix), "Y%d, ", r+1);
+		len = dump_mp_data_row_to_buffer(linebuf, sizeof(linebuf),
+						n_val, cols, y_prefix, "\n", ',');
+		firstline = 0;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+		ret = kernel_write(file, linebuf, len, &pos);
+#else
+		ret = kernel_write(file, linebuf, len, pos);
+		pos += len;
+#endif
+		if (ret != len) {
+			GTP_ERROR("write to file %s failed %d", filepath, ret);
+			goto fail1;
+		}
+
+		n_val += cols;
+	}
+	firstline = 1;
+
+
+	switch (types) {
+	case RAW_DATA:
+		len = scnprintf(linebuf, sizeof(linebuf), "Max:, %4u, ,Min:, %4u, ,Threshold:, %4u, %4u, \n",
+				g_mp_data->rawdata_node_max, g_mp_data->rawdata_node_min, g_mp_data->rawdata_range_min,
+				g_mp_data->rawdata_range_max);
+		break;
+
+	case RAWDATA_DECH:
+		len = scnprintf(linebuf, sizeof(linebuf),
+				"Max:, %4u, ,Min:, %4u, ,Threshold:, %4u%%, \n",
+				g_mp_data->rawdata_dech_max, g_mp_data->rawdata_dech_min,
+				g_mp_data->rawdata_per);
+		break;
+
+	case RAWDATA_DECL:
+		len = scnprintf(linebuf, sizeof(linebuf),
+				"Max:, %4u, ,Min:, %4u, ,Threshold:, %4u%%, \n",
+				g_mp_data->rawdata_decl_max, g_mp_data->rawdata_decl_min,
+				g_mp_data->rawdata_per);
+		break;
+
+	case OPEN_DATA:
+		len = scnprintf(linebuf, sizeof(linebuf), "Threshold:, %4u, \n", \
+				g_mp_data->open_min);
+		break;
+
+	case SHORT_DATA:
+		len = scnprintf(linebuf, sizeof(linebuf), "Threshold:, %4u, \n", \
+				g_mp_data->short_min);
+		break;
+
+	case NOISE_DATA:
+		len = scnprintf(linebuf, sizeof(linebuf), "Threshold:, %4u, \n", \
+				g_mp_data->peak_to_peak);
+		break;
+
+	default:
+		len = 0;
+		break;
+	}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, linebuf, len, &pos);
+#else
+	ret = kernel_write(file, linebuf, len, pos);
+	pos += len;
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, "\n", 1, &pos);
+#else
+	ret = kernel_write(file, "\n", 1, pos);
+	pos++;
+#endif
+	if (ret != 1) {
+		GTP_ERROR("write newline to file %s failed %d", filepath, ret);
+		goto fail1;
+	}
+
+
+fail1:
+	filp_close(file, NULL);
+	return ret;
+
+}
+
+int dump_mp_info_to_csv_file(const char *filepath, int flags)
+{
+	struct file *file;
+	int ret = 0;
+
+	static char linebuf[256];
+	int len;
+#if defined(CONFIG_ENABLE_CHIP_TYPE_GC7371)
+	u8 icname[10] = "GC7371";
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7271)
+	u8 icname[10] = "GC7271";
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202)
+	u8 icname[10] = "GC7202";
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7372)
+	u8 icname[10] = "GC7372";
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7302)
+	u8 icname[10] = "GC7302";
+#elif defined(CONFIG_ENABLE_CHIP_TYPE_GC7202H)
+	u8 icname[10] = "GC7202H";
+#endif
+#if defined(CONFIG_TOUCH_DRIVER_INTERFACE_I2C)
+	u8 intef[5] = "I2C";
+	u8 speed[10];
+#elif defined(CONFIG_TOUCH_DRIVER_INTERFACE_SPI)
+	u8 intef[5] = "SPI";
+	u8 speed[10];
+#endif
+
+	pos = 0;
+	file = filp_open(filepath, flags, 0666);
+	if (IS_ERR(file)) {
+		GTP_ERROR("Open file %s failed %ld", filepath, PTR_ERR(file));
+		return -EPERM;
+	}
+	len = scnprintf(linebuf, sizeof(linebuf), "INFO:, \n");
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, linebuf, len, &pos);
+#else
+	ret = kernel_write(file, linebuf, len, pos);
+	pos += len;
+#endif
+
+	len = scnprintf(linebuf, sizeof(linebuf), "GTP Driver version:, V%s\n", TOUCH_DRIVER_RELEASE_VERISON);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, linebuf, len, &pos);
+#else
+	ret = kernel_write(file, linebuf, len, pos);
+	pos += len;
+#endif
+
+	len = scnprintf(linebuf, sizeof(linebuf), "MP bin version:, 0x%02x%02x.0x%02x%02x\n",
+		g_mp_data->mpbin_ver[1], g_mp_data->mpbin_ver[0],g_mp_data->mpbin_ver[3],g_mp_data->mpbin_ver[2]);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, linebuf, len, &pos);
+#else
+	ret = kernel_write(file, linebuf, len, pos);
+	pos += len;
+#endif
+
+	len = scnprintf(linebuf, sizeof(linebuf), "IC name:, %s\n", icname);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, linebuf, len, &pos);
+#else
+	ret = kernel_write(file, linebuf, len, pos);
+	pos += len;
+#endif
+
+	len = scnprintf(linebuf, sizeof(linebuf), "Interface mode:, %s\n", intef);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, linebuf, len, &pos);
+#else
+	ret = kernel_write(file, linebuf, len, pos);
+	pos += len;
+#endif
+
+#if defined(CONFIG_TOUCH_DRIVER_INTERFACE_I2C)
+		scnprintf(speed, sizeof(speed), "400K");
+#elif defined(CONFIG_TOUCH_DRIVER_INTERFACE_SPI)
+		scnprintf(speed, sizeof(speed), "%u", g_mp_data->gdev->bus_device->max_speed_hz);
+#endif
+	len = scnprintf(linebuf, sizeof(linebuf), "Interface speed:, %s\n", speed);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, linebuf, len, &pos);
+#else
+	ret = kernel_write(file, linebuf, len, pos);
+	pos += len;
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, "\n", 1, &pos);
+#else
+	ret = kernel_write(file, "\n", 1, pos);
+	pos++;
+#endif
+	if (ret != 1) {
+		GTP_ERROR("write newline to file %s failed %d", filepath, ret);
+		goto fail1;
+	}
+
+	len = scnprintf(linebuf, sizeof(linebuf), "RESULT:, \n");
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, linebuf, len, &pos);
+#else
+	ret = kernel_write(file, linebuf, len, pos);
+	pos += len;
+#endif
+
+	len = scnprintf(linebuf, sizeof(linebuf), "MP Test result:, %s\n", \
+					g_mp_data->all_test_result ? "FAIL" : "PASS");
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, linebuf, len, &pos);
+#else
+	ret = kernel_write(file, linebuf, len, pos);
+	pos += len;
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, "\n", 1, &pos);
+#else
+	ret = kernel_write(file, "\n", 1, pos);
+	pos++;
+#endif
+	if (ret != 1) {
+		GTP_ERROR("write newline to file %s failed %d", filepath, ret);
+		goto fail1;
+	}
+
+	len = scnprintf(linebuf, sizeof(linebuf), "1-Chip Test Result:, %s\n", \
+					g_mp_data->chip_id_test_result ? "FAIL" : "PASS");
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, linebuf, len, &pos);
+#else
+	ret = kernel_write(file, linebuf, len, pos);
+	pos += len;
+#endif
+
+	len = scnprintf(linebuf, sizeof(linebuf), "2-MPbin Test Result:, %s\n", \
+					g_mp_data->mp_update_result ? "FAIL" : "PASS");
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, linebuf, len, &pos);
+#else
+	ret = kernel_write(file, linebuf, len, pos);
+	pos += len;
+#endif
+
+	len = scnprintf(linebuf, sizeof(linebuf), "3-Open Test Result:, %s, %s\n", \
+					g_mp_data->open_test_result ? "FAIL" : "PASS", \
+					(g_mp_data->open_test_result > 0) ? "TIMEOUT" : "");
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, linebuf, len, &pos);
+#else
+	ret = kernel_write(file, linebuf, len, pos);
+	pos += len;
+#endif
+
+	len = scnprintf(linebuf, sizeof(linebuf), "4-Short Test Result:, %s, %s\n", \
+					g_mp_data->short_test_result ? "FAIL" : "PASS", \
+					(g_mp_data->short_test_result > 0) ? "TIMEOUT" : "");
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, linebuf, len, &pos);
+#else
+	ret = kernel_write(file, linebuf, len, pos);
+	pos += len;
+#endif
+
+	len = scnprintf(linebuf, sizeof(linebuf), "5-Rawdata Test Result:, %s, %s\n", \
+					g_mp_data->rawdata_test_result ? "FAIL" : "PASS", \
+					(g_mp_data->rawdata_test_result > 0) ? "TIMEOUT" : "");
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, linebuf, len, &pos);
+#else
+	ret = kernel_write(file, linebuf, len, pos);
+	pos += len;
+#endif
+
+	len = scnprintf(linebuf, sizeof(linebuf), "6-Noise Test Result:, %s, %s\n", \
+					g_mp_data->noise_test_result ? "FAIL" : "PASS", \
+					(g_mp_data->noise_test_result > 0) ? "TIMEOUT" : "");
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, linebuf, len, &pos);
+#else
+	ret = kernel_write(file, linebuf, len, pos);
+	pos += len;
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, "\n", 1, &pos);
+#else
+	ret = kernel_write(file, "\n", 1, pos);
+	pos++;
+#endif
+	if (ret != 1) {
+		GTP_ERROR("write newline to file %s failed %d", filepath, ret);
+		goto fail1;
+	}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, "\n", 1, &pos);
+#else
+	ret = kernel_write(file, "\n", 1, pos);
+	pos++;
+#endif
+	if (ret != 1) {
+		GTP_ERROR("write newline to file %s failed %d", filepath, ret);
+		goto fail1;
+	}
+
+fail1:
+	filp_close(file, NULL);
+	return ret;
+
+}
+#endif
+
+int gcore_write_buff_to_file(struct file *file, char *buff, int len)
+{
+#ifndef GKI_CHECK
+	int ret = 0;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, buff, len, &pos);
+#else
+	ret = kernel_write(file, buff, len, pos);
+	pos += len;
+#endif
+	if (ret != len) {
+		GTP_ERROR("write to file failed %d", ret);
+		return -EPERM;
+	}
+#endif
+	return 0;
+}
+
+int gcore_write_blank_line_to_file(struct file *file)
+{
+#ifndef GKI_CHECK
+	int ret = 0;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	ret = kernel_write(file, "\n", 1, &pos);
+#else
+	ret = kernel_write(file, "\n", 1, pos);
+	pos++;
+#endif
+	if (ret != 1) {
+		GTP_ERROR("write newline to file failed %d", ret);
+		return -EPERM;
+	}
+#endif
+	return 0;
+}
+
+int frame_count;
+u8 demolog_path[200] = "/sdcard/demodata.csv";
+
+int dump_demo_data_to_csv_file(const u8 *data, int rows, int cols)
+{
+#ifndef GKI_CHECK
+	struct file *file;
+#endif
+	char linebuf[256];
+	const u8 *n_val = data;
+	int len;
+	int r = 0;
+	int ret = 0;
+
+	GTP_DEBUG("dump demo data to csv file");
+
+	frame_count++;
+
+#ifndef GKI_CHECK
+	file = filp_open(demolog_path, O_RDWR | O_CREAT, 0666);
+    if (IS_ERR(file)) {
+        GTP_ERROR("Open file %s failed %ld", demolog_path, PTR_ERR(file));
+        return -EPERM;
+    }
+#endif
+	len = scnprintf(linebuf, sizeof(linebuf), "Frame_%d:, \n", frame_count);
+#ifndef GKI_CHECK
+	if (gcore_write_buff_to_file(file, linebuf, len)) {
+		goto fail;
+	}
+#endif
+	for (r = 0; r < rows; r++) {
+		len = dump_demo_data_row_to_buffer(linebuf, sizeof(linebuf),
+						n_val, cols, NULL, "\n", ',');
+#ifndef GKI_CHECK
+		if (gcore_write_buff_to_file(file, linebuf, len)) {
+			goto fail;
+		}
+#endif
+		n_val += cols;
+	}
+
+	len = dump_demo_data_row_to_buffer(linebuf, sizeof(linebuf), n_val, 5, NULL, "\n", ',');
+#ifndef GKI_CHECK
+	if (gcore_write_buff_to_file(file, linebuf, len)) {
+		goto fail;
+	}
+	if (gcore_write_blank_line_to_file(file)) {
+		goto fail;
+	}
+fail:
+	filp_close(file, NULL);
+#endif
+    return ret;
 
 }
 
@@ -1157,89 +2025,389 @@ void dump_mp_data_to_seq_file(struct seq_file *m, const u16 *data, int rows, int
 	}
 }
 
+void dump_diff_data_to_seq_file(struct seq_file *m, const s16 *data, int rows, int cols)
+{
+	int r = 0;
+	const s16 *n_vals = data;
+	char linebuf[256];
+	int len;
+/* char y_prefix[10]; */
+/* char topic[30]; */
+
+	/*
+	strncpy(topic, "Raw:", sizeof(topic));
+	len = dump_excel_head_row_to_buffer(linebuf, sizeof(linebuf), cols, topic, "\n", ',');
+	seq_puts(m, linebuf);
+	*/
+
+	for (r = 0; r < rows; r++) {
+		/* scnprintf(y_prefix, sizeof(y_prefix), "Y%2d ", r+1); */
+		len = dump_diff_data_row_to_buffer(linebuf, sizeof(linebuf), n_vals, cols, NULL, "\n", ',');
+		seq_puts(m, linebuf);
+
+		n_vals += cols;
+	}
+}
+
+u8 g_filepath[100];
+
+#define FILEPATH_MAX_LENGTH 200
+
+#ifdef GKI_CHECK
 int gcore_save_mp_data_to_file(struct gcore_mp_data *mp_data)
 {
 	int rows = RAWDATA_ROW;
 	int cols = RAWDATA_COLUMN;
 	int ret = 0;
 
-	GTP_DEBUG("save mp data to file");
+	GTP_DEBUG("dump mp data to file,row: %d	col: %d", rows, cols);
+
+	dump_mp_info_to_file();
+
 	if (mp_data->test_open) {
-		tpd_copy_to_tp_firmware_data("\n======================================================= open test ============================================================\n");
-		ret = dump_mp_data_to_buffer(mp_data->open_node_val, rows, cols);
+		ret = dump_mp_data_to_file(mp_data->open_node_val, rows, cols, OPEN_DATA);
 		if (ret < 0) {
-			GTP_ERROR("dump mp open test data to buffer failed");
-			return ret;
+			GTP_ERROR("dump mp open test data to file failed");
+			goto fail;
 		}
 	}
 
 	if (mp_data->test_short) {
-		tpd_copy_to_tp_firmware_data("\n======================================================= short test ============================================================\n");
-		ret = dump_mp_data_to_buffer(mp_data->short_node_val, rows, cols);
+		ret = dump_mp_data_to_file(mp_data->short_node_val, rows, cols, SHORT_DATA);
 		if (ret < 0) {
-			GTP_ERROR("dump mp short test data to buffer failed");
-			return ret;
+			GTP_ERROR("dump mp short test data to file failed");
+			goto fail;
 		}
 	}
 
 	if (mp_data->test_rawdata) {
-		tpd_copy_to_tp_firmware_data("\n======================================================= rawdata test ============================================================\n");
-		ret = dump_mp_data_to_buffer(mp_data->rawdata_node_val, rows, cols);
+		ret = dump_mp_data_to_file(mp_data->rawdata_node_val, rows, cols, RAW_DATA);
 		if (ret < 0) {
-			GTP_ERROR("dump mp test rawdata to buffer failed");
+			GTP_ERROR("dump mp test rawdata to file failed");
+			goto fail;
 		}
 
-	if (mp_data->test_noise) {
-		tpd_copy_to_tp_firmware_data("\n======================================================= noise test ============================================================\n");
-		ret = dump_mp_data_to_buffer(mp_data->noise_node_val, rows, cols);
-		if (ret < 0) {
-			GTP_ERROR("dump mp test noise to buffer failed");
-		}
-	}
-
-#ifdef MP_RAWDATA_DEC_TEST
-		tpd_copy_to_tp_firmware_data("\n======================================================= rawdata DECH ============================================================\n");
-		ret = dump_mp_data_to_buffer(mp_data->rawdata_dec_h, rows, cols);
+#if MP_RAWDATA_DEC_TEST
+		ret = dump_mp_data_to_file(mp_data->rawdata_dec_h, rows, cols, RAWDATA_DECH);
 		if (ret < 0) {
 			GTP_ERROR("dump mp test rawdata devc h to file failed");
+			goto fail;
 		}
 
-		tpd_copy_to_tp_firmware_data("\n======================================================= rawdata DECL ============================================================\n");
-		ret = dump_mp_data_to_buffer(mp_data->rawdata_dec_l, rows, cols);
+		ret = dump_mp_data_to_file(mp_data->rawdata_dec_l, rows, cols, RAWDATA_DECL);
 		if (ret < 0) {
 			GTP_ERROR("dump mp test rawdata devc l to file failed");
+			goto fail;
 		}
-		tpd_copy_to_tp_firmware_data("\n======================================================= rawdata AVGH ============================================================\n");
-		ret = dump_mp_data_to_buffer(mp_data->rawdata_avg_h, rows, cols);
+#endif
+#if MP_RAWDATA_AVG_TEST
+		ret = dump_mp_data_to_file(mp_data->rawdata_avg_h, rows, cols);
 		if (ret < 0) {
 			GTP_ERROR("dump mp test rawdata avg h to file failed");
+			goto fail;
 		}
-		tpd_copy_to_tp_firmware_data("\n======================================================= rawdata AVGL ============================================================\n");
-		ret = dump_mp_data_to_buffer(mp_data->rawdata_avg_l, rows, cols);
+
+		ret = dump_mp_data_to_file(mp_data->rawdata_avg_l, rows, cols);
 		if (ret < 0) {
 			GTP_ERROR("dump mp test rawdata avg l to file failed");
+			goto fail;
 		}
 #endif
 	}
+
+	if (mp_data->test_noise) {
+		ret = dump_mp_data_to_file(mp_data->noise_node_val, rows, cols, NOISE_DATA);
+		if (ret < 0) {
+			GTP_ERROR("dump mp noise test data to file failed");
+			goto fail;
+		}
+	}
+
+	return 0;
+
+fail:
+	return ret;
+}
+#else
+static char *get_date_time_str(void)
+{
+	struct timespec now_time;
+	struct rtc_time rtc_now_time;
+	static char time_data_buf[128] = { 0 };
+
+	getnstimeofday(&now_time);
+	rtc_time_to_tm(now_time.tv_sec, &rtc_now_time);
+	snprintf(time_data_buf, sizeof(time_data_buf), "%04d%02d%02d_%02d%02d%02d",
+		(rtc_now_time.tm_year + 1900), rtc_now_time.tm_mon + 1,
+		rtc_now_time.tm_mday, rtc_now_time.tm_hour, rtc_now_time.tm_min,
+		rtc_now_time.tm_sec);
+
+	return time_data_buf;
+}
+
+int gcore_save_mp_data_to_file(struct gcore_mp_data *mp_data)
+{
+	int rows = RAWDATA_ROW;
+	int cols = RAWDATA_COLUMN;
+	int ret = 0;
+	u8 *filepath = NULL;
+	char *rtctime = NULL;
+
+	GTP_DEBUG("save mp data to file");
+
+	filepath = kzalloc(FILEPATH_MAX_LENGTH, GFP_KERNEL);
+	if (IS_ERR_OR_NULL(filepath)) {
+		GTP_ERROR("alloc filepath mem fail!");
+		return -EPERM;
+	}
+
+	rtctime = get_date_time_str();
+
+	scnprintf(filepath, FILEPATH_MAX_LENGTH, "%s_%s_%s.csv",
+					MP_TEST_LOG_FILEPATH, rtctime,
+					mp_data->all_test_result ? "FAIL" : "PASS");
+
+	GTP_DEBUG("dump mp data to csv file: %s row: %d	col: %d", filepath, rows, cols);
+
+	ret = dump_mp_info_to_csv_file(filepath, O_RDWR | O_CREAT);
+	if (ret < 0) {
+		GTP_ERROR("dump mp info to file failed");
+		goto fail;
+	}
+
+	if (mp_data->test_open) {
+		ret = dump_mp_data_to_csv_file(filepath,
+					       O_RDWR | O_CREAT, mp_data->open_node_val, rows,
+					       cols, OPEN_DATA);
+		if (ret < 0) {
+			GTP_ERROR("dump mp open test data to file failed");
+			goto fail;
+		}
+	}
+
+	if (mp_data->test_short) {
+		ret = dump_mp_data_to_csv_file(filepath,
+					       O_RDWR | O_CREAT, mp_data->short_node_val, rows,
+					       cols, SHORT_DATA);
+		if (ret < 0) {
+			GTP_ERROR("dump mp short test data to file failed");
+			goto fail;
+		}
+	}
+
+	if (mp_data->test_rawdata) {
+		ret = dump_mp_data_to_csv_file(filepath,
+					     O_RDWR | O_CREAT, mp_data->rawdata_node_val, rows,
+					     cols, RAW_DATA);
+		if (ret < 0) {
+			GTP_ERROR("dump mp test rawdata to file failed");
+			goto fail;
+		}
+
+#if MP_RAWDATA_DEC_TEST
+		ret = dump_mp_data_to_csv_file(filepath,
+					     O_RDWR | O_CREAT, mp_data->rawdata_dec_h, rows,
+					     cols, RAWDATA_DECH);
+		if (ret < 0) {
+			GTP_ERROR("dump mp test rawdata devc h to file failed");
+			goto fail;
+		}
+
+
+		scnprintf(filepath, FILEPATH_MAX_LENGTH, "%s_%lu_%s.csv",
+					MP_TEST_LOG_FILEPATH, tv.tv_sec,
+					mp_data->all_test_result ? "FAIL" : "PASS");
+		ret = dump_mp_data_to_csv_file(filepath,
+					     O_RDWR | O_CREAT | O_TRUNC, mp_data->rawdata_dec_l, rows,
+					     cols, RAWDATA_DECL);
+		if (ret < 0) {
+			GTP_ERROR("dump mp test rawdata devc l to file failed");
+			goto fail;
+		}
+#endif
+#if MP_RAWDATA_AVG_TEST
+		ret = dump_mp_data_to_csv_file(filepath,
+					     O_RDWR | O_CREAT | O_TRUNC, mp_data->rawdata_avg_h, rows,
+					     cols);
+		if (ret < 0) {
+			GTP_ERROR("dump mp test rawdata avg h to file failed");
+			goto fail;
+		}
+
+		ret = dump_mp_data_to_csv_file(filepath,
+					     O_RDWR | O_CREAT | O_TRUNC, mp_data->rawdata_avg_l, rows,
+					     cols);
+		if (ret < 0) {
+			GTP_ERROR("dump mp test rawdata avg l to file failed");
+			goto fail;
+		}
+#endif
+	}
+
+	if (mp_data->test_noise) {
+		ret = dump_mp_data_to_csv_file(filepath,
+						   O_RDWR | O_CREAT, mp_data->noise_node_val, rows,
+						   cols, NOISE_DATA);
+		if (ret < 0) {
+			GTP_ERROR("dump mp noise test data to file failed");
+			goto fail;
+		}
+	}
+
+	kfree(filepath);
+
+	return 0;
+
+fail:
+	kfree(filepath);
+	return ret;
+}
+#endif
+
+int save_demo_data_to_file(void)
+{
+#ifndef GKI_CHECK
+	char *rtctime = NULL;
+	struct file *file;
+	pos = 0;
+	frame_count = 0;
+
+	rtctime = get_date_time_str();
+
+	scnprintf(demolog_path, FILEPATH_MAX_LENGTH, "%s_%s.csv", "/sdcard/demodata", rtctime);
+
+	GTP_DEBUG("dump demo data to csv file: %s", demolog_path);
+
+	file = filp_open(demolog_path, O_RDWR | O_CREAT, 0666);
+    if (IS_ERR(file)) {
+        GTP_ERROR("Open file %s failed %ld", demolog_path, PTR_ERR(file));
+        return -EPERM;
+    }
+
+	filp_close(file, NULL);
+#endif
+	return 0;
+}
+
+#define MP_BIN_NAME "GC7202_mp.bin"
+
+int gcore_mp_bin_update(void)
+{
+	u8 *fw_buf = NULL;
+#ifdef CONFIG_UPDATE_FIRMWARE_BY_BIN_FILE
+	const struct firmware *fw = NULL;
+
+	fw_buf = g_mp_data->gdev->fw_mem;
+	if (IS_ERR_OR_NULL(fw_buf)) {
+		GTP_ERROR("fw buf mem is NULL");
+		return -EPERM;
+	}
+
+	if (request_firmware(&fw, gcore_mp_firmware_name, &g_mp_data->gdev->bus_device->dev)) {
+		GTP_ERROR("request firmware fail");
+		goto fail1;
+	}
+
+	memcpy(fw_buf, fw->data, fw->size);
+
+	add_CRC(fw_buf);
+
+	GTP_DEBUG("fw buf:%x %x %x %x %x %x", fw_buf[0], fw_buf[1], fw_buf[2],
+		  fw_buf[3], fw_buf[4], fw_buf[5]);
+
+	GTP_DEBUG("mp bin ver:%x %x %x %x", fw_buf[FW_VERSION_ADDR+1], fw_buf[FW_VERSION_ADDR], \
+										fw_buf[FW_VERSION_ADDR+3], fw_buf[FW_VERSION_ADDR+2]);
+
+	if (fw) {
+		release_firmware(fw);
+	}
+#else
+	fw_buf = gcore_mp_FW;
+#endif
+
+	g_mp_data->mpbin_ver[0] = fw_buf[FW_VERSION_ADDR];
+	g_mp_data->mpbin_ver[1] = fw_buf[FW_VERSION_ADDR + 1];
+	g_mp_data->mpbin_ver[2] = fw_buf[FW_VERSION_ADDR + 2];
+	g_mp_data->mpbin_ver[3] = fw_buf[FW_VERSION_ADDR + 3];
+
+	GTP_DEBUG("mp bin version:%02x %02x %02x %02x", g_mp_data->mpbin_ver[1],
+		g_mp_data->mpbin_ver[0], g_mp_data->mpbin_ver[3], g_mp_data->mpbin_ver[2]);
+
+#ifdef CONFIG_GCORE_AUTO_UPDATE_FW_HOSTDOWNLOAD
+	if (gcore_auto_update_hostdownload_proc(fw_buf)) {
+		GTP_ERROR("mp bin update hostdownload proc fail");
+		goto fail1;
+	}
+#else
+	if (gcore_update_hostdownload_idm2(fw_buf)) {
+		GTP_ERROR("mp bin update hostdownload proc fail");
+		goto fail1;
+	}
+#endif
+
+	return 0;
+
+fail1:
+
+	return -EPERM;
+
+}
+
+int gcore_mp_test_all_result(struct gcore_mp_data *mp_data)
+{
+	if (mp_data->test_int_pin && mp_data->int_pin_test_result) {
+		return -EPERM;
+	}
+
+	if (mp_data->test_chip_id && mp_data->chip_id_test_result) {
+		return -EPERM;
+	}
+
+	if (mp_data->test_open && mp_data->open_test_result) {
+		return -EPERM;
+	}
+
+	if (mp_data->test_short && mp_data->short_test_result) {
+		return -EPERM;
+	}
+
+	if (mp_data->test_short && mp_data->short_test_result) {
+		return -EPERM;
+	}
+
+	if (mp_data->test_rawdata && mp_data->rawdata_test_result) {
+		return -EPERM;
+	}
+
+	if (mp_data->test_noise && mp_data->noise_test_result) {
+		return -EPERM;
+	}
+
 	return 0;
 }
 
 int gcore_start_mp_test(void)
 {
 	struct gcore_mp_data *mp_data = g_mp_data;
-	int test_result = 0;
-	int ret = 0;
-	struct gcore_dev *gdev = fn_data.gdev;
+
+	fn_data.gdev->ts_stat = TS_MPTEST;
+	if (mutex_is_locked(&fn_data.gdev->ITOTEST_lock) ){
+		GTP_DEBUG("mp test is locked, ignore");
+		mutex_unlock(&fn_data.gdev->ITOTEST_lock);
+		return -EPERM;
+	}
+
+	mutex_lock(&fn_data.gdev->ITOTEST_lock);
 
 	GTP_DEBUG("gcore start mp test.");
-	gdev->tp_self_test = true;
+
+#if GCORE_WDT_RECOVERY_ENABLE
+	cancel_delayed_work_sync(&mp_data->gdev->wdt_work);
+#endif
+
 	gcore_parse_mp_test_ini(mp_data);
 
-	ret = gcore_alloc_mp_test_mem(mp_data);
-	if (ret) {
-		gcore_free_mp_test_mem(g_mp_data);
-		return ret;
-	}
+	gcore_alloc_mp_test_mem(mp_data);
 
 	if (mp_data->test_int_pin) {
 		mp_data->int_pin_test_result = gcore_mp_test_int_pin(mp_data);
@@ -1247,6 +2415,7 @@ int gcore_start_mp_test(void)
 			GTP_DEBUG("Int pin test result fail!");
 		}
 	}
+
 	usleep_range(1000, 1100);
 
 	if (mp_data->test_chip_id) {
@@ -1256,32 +2425,33 @@ int gcore_start_mp_test(void)
 			GTP_DEBUG("Chip id test result fail!");
 		}
 	}
+
 	usleep_range(1000, 1100);
 
-	if (mp_data->test_open || mp_data->test_short || mp_data->test_rawdata) {
+	if (mp_data->test_open || mp_data->test_short || mp_data->test_rawdata \
+						   || mp_data->test_noise) {
 		GTP_DEBUG("mp test begin to updata mp bin");
 
-#ifdef CONFIG_GCORE_AUTO_UPDATE_FW_HOSTDOWNLOAD
-		if (gcore_auto_update_hostdownload_proc(gcore_mp_FW)) {
-			GTP_ERROR("mp bin update hostdownload proc fail");
-		}
-/* gcore_request_firmware_update_work(NULL); */
-#else
-		if (gcore_mp_firmware_update()) {
-			GTP_ERROR("mp bin update hostdownload proc fail");
-		}
-#endif
-		else {
-			usleep_range(1000, 1100);
+		if (gcore_mp_bin_update()) {
+			GTP_ERROR("gcore mp bin update fail!");
+			mp_data->mp_update_result = -1;
+			mp_data->open_test_result = -1;
+			mp_data->short_test_result = -1;
+			mp_data->rawdata_test_result = -1;
+			mp_data->noise_test_result = -1;
+		} else {
+			msleep(100);
+
+			mp_data->mp_update_result = 0;
 
 			if (mp_data->test_open) {
 				mp_data->open_test_result = gcore_mp_test_item_open(mp_data);
 				if (mp_data->open_test_result) {
-					gcore_tptest_result = gcore_tptest_result | TEST_GT_OPEN;
 					GTP_DEBUG("Open test result fail!");
 				}
 			}
-			usleep_range(1000, 1100);
+
+			msleep(100);
 
 			if (mp_data->test_short) {
 				mp_data->short_test_result = gcore_mp_test_item_short(mp_data);
@@ -1310,34 +2480,39 @@ int gcore_start_mp_test(void)
 					GTP_DEBUG("Noise test result fail!");
 				}
 			}
-			msleep(100);
 		}
 
 	}
 
+	msleep(100);
+
+	mp_data->all_test_result = gcore_mp_test_all_result(mp_data);
+
+	GTP_DEBUG("start mp test result:%d", mp_data->all_test_result);
+
 	gcore_save_mp_data_to_file(mp_data);
-	gdev->irq_disable(gdev);
+
 #ifdef CONFIG_GCORE_AUTO_UPDATE_FW_HOSTDOWNLOAD
 	gcore_request_firmware_update_work(NULL);
 #else
 	gcore_upgrade_soft_reset();
 #endif
-	msleep(100);
-	gdev->irq_enable(gdev);
-	test_result = (mp_data->int_pin_test_result || mp_data->chip_id_test_result
-		       || mp_data->open_test_result || mp_data->short_test_result
-		       || mp_data->rawdata_test_result || mp_data->noise_test_result) ? -1 : 0;
 
-	GTP_DEBUG("start mp test result:%d", test_result);
-	gdev->tp_self_test = false;
-	return test_result;
+#if GCORE_WDT_RECOVERY_ENABLE
+	mod_delayed_work(mp_data->gdev->fwu_workqueue, &mp_data->gdev->wdt_work, \
+					   msecs_to_jiffies(GCORE_WDT_TIMEOUT_PERIOD));
+#endif
+
+	fn_data.gdev->ts_stat = TS_NORMAL;
+	mutex_unlock(&fn_data.gdev->ITOTEST_lock);
+
+	return mp_data->all_test_result;
 
 }
 
 static int32_t gcore_mp_test_open(struct inode *inode, struct file *file)
 {
-	struct gcore_mp_data *mp_data = pde_data(inode);
-	int ret = 0;
+	struct gcore_mp_data *mp_data = PDE_DATA(inode);
 
 	if (mp_data == NULL) {
 		GTP_ERROR("Open selftest proc with mp data = NULL");
@@ -1346,12 +2521,13 @@ static int32_t gcore_mp_test_open(struct inode *inode, struct file *file)
 
 	GTP_DEBUG("gcore mp test open");
 
+#if GCORE_WDT_RECOVERY_ENABLE
+	cancel_delayed_work_sync(&mp_data->gdev->wdt_work);
+#endif
+
 	gcore_parse_mp_test_dt(mp_data);
 
-	ret = gcore_alloc_mp_test_mem(mp_data);
-	if (ret) {
-		gcore_free_mp_test_mem(g_mp_data);
-	}
+	gcore_alloc_mp_test_mem(mp_data);
 
 	if (mp_data->test_int_pin) {
 		mp_data->int_pin_test_result = gcore_mp_test_int_pin(mp_data);
@@ -1365,20 +2541,15 @@ static int32_t gcore_mp_test_open(struct inode *inode, struct file *file)
 
 	usleep_range(1000, 1100);
 
-	if (mp_data->test_open || mp_data->test_short) {
+	if (mp_data->test_open || mp_data->test_short || mp_data->test_rawdata) {
 		GTP_DEBUG("mp test begin to updata mp bin");
 
-#ifdef CONFIG_GCORE_AUTO_UPDATE_FW_HOSTDOWNLOAD
-		if (gcore_auto_update_hostdownload_proc(gcore_mp_FW)) {
-			GTP_ERROR("mp bin update hostdownload proc fail");
-		}
-/* gcore_request_firmware_update_work(NULL); */
-#else
-		if (gcore_mp_firmware_update()) {
-			GTP_ERROR("mp bin update hostdownload proc fail");
-		}
-#endif
-		else {
+		if (gcore_mp_bin_update()) {
+			GTP_ERROR("gcore mp bin update fail!");
+			mp_data->open_test_result = 1;
+			mp_data->short_test_result = 1;
+			mp_data->rawdata_test_result = 1;
+		} else {
 			usleep_range(1000, 1100);
 
 			if (mp_data->test_open) {
@@ -1389,6 +2560,15 @@ static int32_t gcore_mp_test_open(struct inode *inode, struct file *file)
 
 			if (mp_data->test_short) {
 				mp_data->short_test_result = gcore_mp_test_item_short(mp_data);
+			}
+
+			usleep_range(1000, 1100);
+
+			if (mp_data->test_rawdata) {
+				mp_data->rawdata_test_result = gcore_mp_test_item_rawdata(mp_data);
+				if (mp_data->rawdata_test_result) {
+					GTP_DEBUG("Rawdata test result fail!");
+				}
 			}
 		}
 
@@ -1403,15 +2583,135 @@ static int32_t gcore_mp_test_open(struct inode *inode, struct file *file)
 
 	((struct seq_file *)file->private_data)->private = mp_data;
 
+#if GCORE_WDT_RECOVERY_ENABLE
+	mod_delayed_work(mp_data->gdev->fwu_workqueue, &mp_data->gdev->wdt_work, \
+					   msecs_to_jiffies(GCORE_WDT_TIMEOUT_PERIOD));
+#endif
+
 	return 0;
 }
 
-struct proc_ops gcore_mp_fops = {
-	.proc_open = gcore_mp_test_open,
-	.proc_read = seq_read,
-	.proc_lseek = seq_lseek,
-	.proc_release = seq_release,
+struct file_operations gcore_mp_fops = {
+	.owner = THIS_MODULE,
+	.open = gcore_mp_test_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = seq_release,
 };
+
+
+static void *gcore_seq_raw_start(struct seq_file *m, loff_t *pos)
+{
+	GTP_DEBUG("seq start");
+
+	return pos;
+}
+
+static void *gcore_seq_raw_next(struct seq_file *m, void *v, loff_t *pos)
+{
+	(*pos)++;
+
+	return pos;
+}
+
+static void gcore_seq_raw_stop(struct seq_file *m, void *v)
+{
+	GTP_DEBUG("seq stop");
+
+	return;
+}
+
+static int gcore_seq_raw_show(struct seq_file *m, void *v)
+{
+	struct gcore_dev *gdev = (struct gcore_dev *)m->private;
+	int rows = RAWDATA_ROW;
+	int cols = RAWDATA_COLUMN;
+	int i = 0;
+	u8 *touch_data_p = gdev->touch_data;
+	s16 node_data = 0;
+
+	gdev->usr_read = true;
+
+	GTP_DEBUG("adb read before sleep.");
+	while (gdev->data_ready == false) {
+		if (wait_event_interruptible(gdev->usr_wait, gdev->data_ready == true)) {
+			gdev->usr_read = false;
+			return -ERESTARTSYS;
+		}
+	}
+	GTP_DEBUG("adb read after sleep.");
+
+	for (i = 0; i < RAW_DATA_SIZE / 2; i++) {
+		node_data = (touch_data_p[1] << 8) | touch_data_p[0];
+
+		gdev->diffdata[i] = node_data;
+
+		touch_data_p += 2;
+	}
+
+	dump_diff_data_to_seq_file(m, gdev->diffdata, rows, cols);
+
+	seq_putc(m, '\n');
+
+	gdev->usr_read = false;
+	gdev->data_ready = false;
+
+	return 0;
+}
+
+const struct seq_operations gcore_rawdata_seq_ops = {
+	.start = gcore_seq_raw_start,
+	.next = gcore_seq_raw_next,
+	.stop = gcore_seq_raw_stop,
+	.show = gcore_seq_raw_show,
+};
+
+static int32_t gcore_rawdata_open(struct inode *inode, struct file *file)
+{
+	struct gcore_dev *gdev = g_mp_data->gdev;
+
+	if (IS_ERR_OR_NULL(gdev->diffdata)) {
+		gdev->diffdata = (s16 *)kzalloc(RAW_DATA_SIZE, GFP_KERNEL);
+		if (IS_ERR_OR_NULL(gdev->diffdata)) {
+			GTP_ERROR("allocate diffdata mem fail!");
+			return -ENOMEM;
+		}
+	}
+
+	memset(gdev->diffdata, 0, RAW_DATA_SIZE);
+
+	if (seq_open(file, &gcore_rawdata_seq_ops)) {
+		GTP_ERROR("seq open fail!");
+		return -EPERM;
+	}
+
+	((struct seq_file *)file->private_data)->private = gdev;
+
+	return 0;
+}
+
+struct proc_dir_entry *rawdata_proc_entry;
+#define RAWDATA_PROC_FILENAME "gcore_rawdata"
+
+struct file_operations gcore_rawdata_fops = {
+	.owner = THIS_MODULE,
+	.open = gcore_rawdata_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = seq_release,
+};
+
+int gcore_rawdata_node_init(void)
+{
+	rawdata_proc_entry = proc_create_data(RAWDATA_PROC_FILENAME,
+						  S_IRUGO, NULL, &gcore_rawdata_fops, NULL);
+	if (rawdata_proc_entry == NULL) {
+		GTP_ERROR("create rawdata proc entry failed");
+		return -EPERM;
+	}
+
+	return 0;
+}
 
 int gcore_mp_test_fn_init(struct gcore_dev *gdev)
 {
@@ -1422,7 +2722,7 @@ int gcore_mp_test_fn_init(struct gcore_dev *gdev)
 	mp_thread = kthread_run(mp_test_event_handler, gdev, "gcore_mptest");
 
 	mp_data = kzalloc(sizeof(struct gcore_mp_data), GFP_KERNEL);
-	if (!mp_data) {
+	if (IS_ERR_OR_NULL(mp_data)) {
 		GTP_ERROR("allocate mp_data mem fail! failed");
 		return -EPERM;
 	}
@@ -1438,6 +2738,8 @@ int gcore_mp_test_fn_init(struct gcore_dev *gdev)
 		goto fail1;
 	}
 
+	gcore_rawdata_node_init();
+
 	return 0;
 
 fail1:
@@ -1448,7 +2750,11 @@ fail1:
 
 void gcore_mp_test_fn_remove(struct gcore_dev *gdev)
 {
+	GTP_INFO("%s enter", __func__);
+	mp_test_fn.event_flag = true;
+	wake_up_interruptible(&gdev->wait);
 	kthread_stop(mp_thread);
+	GTP_INFO("%s mp_thread stop", __func__);
 
 	if (g_mp_data->mp_proc_entry) {
 		remove_proc_entry(MP_TEST_PROC_FILENAME, NULL);
@@ -1457,6 +2763,35 @@ void gcore_mp_test_fn_remove(struct gcore_dev *gdev)
 	gcore_free_mp_test_mem(g_mp_data);
 
 	kfree(g_mp_data);
-	g_mp_data = NULL;
+	GTP_INFO("%s exit", __func__);
+	return;
 }
 
+#if 0
+
+static int __init gcore_mp_test_init(void)
+{
+	GTP_DEBUG("gcore_fw_update_init.");
+
+	gcore_new_function_register(&mp_test_fn);
+
+	return 0;
+}
+
+static void __exit gcore_mp_test_exit(void)
+{
+	GTP_DEBUG("gcore_fw_update_exit.");
+
+	gcore_new_function_unregister(&mp_test_fn);
+
+	return;
+}
+
+module_init(gcore_mp_test_init);
+module_exit(gcore_mp_test_exit);
+
+MODULE_AUTHOR("GalaxyCore, Inc.");
+MODULE_DESCRIPTION("GalaxyCore Touch MP Test Module");
+MODULE_LICENSE("GPL");
+
+#endif
