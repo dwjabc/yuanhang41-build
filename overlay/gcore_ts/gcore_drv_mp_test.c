@@ -2581,6 +2581,110 @@ static int32_t gcore_mp_test_open(struct inode *inode, struct file *file)
 		return -EPERM;
 	}
 
+	((struct seq_file *)file->private_data)->private = mp_data;
+
+#if GCORE_WDT_RECOVERY_ENABLE
+	mod_delayed_work(mp_data->gdev->fwu_workqueue, &mp_data->gdev->wdt_work, \
+					   msecs_to_jiffies(GCORE_WDT_TIMEOUT_PERIOD));
+#endif
+
+	return 0;
+}
+
+static const struct proc_ops gcore_mp_pops = {
+	
+	.proc_open = gcore_mp_test_open,
+	.proc_read = seq_read,
+	.proc_lseek = seq_lseek,
+	.proc_release = seq_release,
+};
+
+
+static void *gcore_seq_raw_start(struct seq_file *m, loff_t *pos)
+{
+	GTP_DEBUG("seq start");
+
+	return pos;
+}
+
+static void *gcore_seq_raw_next(struct seq_file *m, void *v, loff_t *pos)
+{
+	(*pos)++;
+
+	return pos;
+}
+
+static void gcore_seq_raw_stop(struct seq_file *m, void *v)
+{
+	GTP_DEBUG("seq stop");
+
+	return;
+}
+
+static int gcore_seq_raw_show(struct seq_file *m, void *v)
+{
+	struct gcore_dev *gdev = (struct gcore_dev *)m->private;
+	int rows = RAWDATA_ROW;
+	int cols = RAWDATA_COLUMN;
+	int i = 0;
+	u8 *touch_data_p = gdev->touch_data;
+	s16 node_data = 0;
+
+	gdev->usr_read = true;
+
+	GTP_DEBUG("adb read before sleep.");
+	while (gdev->data_ready == false) {
+		if (wait_event_interruptible(gdev->usr_wait, gdev->data_ready == true)) {
+			gdev->usr_read = false;
+			return -ERESTARTSYS;
+		}
+	}
+	GTP_DEBUG("adb read after sleep.");
+
+	for (i = 0; i < RAW_DATA_SIZE / 2; i++) {
+		node_data = (touch_data_p[1] << 8) | touch_data_p[0];
+
+		gdev->diffdata[i] = node_data;
+
+		touch_data_p += 2;
+	}
+
+	dump_diff_data_to_seq_file(m, gdev->diffdata, rows, cols);
+
+	seq_putc(m, '\n');
+
+	gdev->usr_read = false;
+	gdev->data_ready = false;
+
+	return 0;
+}
+
+const struct seq_operations gcore_rawdata_seq_ops = {
+	.start = gcore_seq_raw_start,
+	.next = gcore_seq_raw_next,
+	.stop = gcore_seq_raw_stop,
+	.show = gcore_seq_raw_show,
+};
+
+static int32_t gcore_rawdata_open(struct inode *inode, struct file *file)
+{
+	struct gcore_dev *gdev = g_mp_data->gdev;
+
+	if (IS_ERR_OR_NULL(gdev->diffdata)) {
+		gdev->diffdata = (s16 *)kzalloc(RAW_DATA_SIZE, GFP_KERNEL);
+		if (IS_ERR_OR_NULL(gdev->diffdata)) {
+			GTP_ERROR("allocate diffdata mem fail!");
+			return -ENOMEM;
+		}
+	}
+
+	memset(gdev->diffdata, 0, RAW_DATA_SIZE);
+
+	if (seq_open(file, &gcore_rawdata_seq_ops)) {
+		GTP_ERROR("seq open fail!");
+		return -EPERM;
+	}
+
 	((struct seq_file *)file->private_data)->private = gdev;
 
 	return 0;
@@ -2590,14 +2694,8 @@ struct proc_dir_entry *rawdata_proc_entry;
 #define RAWDATA_PROC_FILENAME "gcore_rawdata"
 
 static const struct proc_ops gcore_rawdata_pops = {
+	
 	.proc_open = gcore_rawdata_open,
-	.proc_read = seq_read,
-	.proc_lseek = seq_lseek,
-	.proc_release = seq_release,
-};
-
-static const struct proc_ops gcore_mp_pops = {
-	.proc_open = gcore_mp_test_open,
 	.proc_read = seq_read,
 	.proc_lseek = seq_lseek,
 	.proc_release = seq_release,
