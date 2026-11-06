@@ -2182,6 +2182,14 @@ int gcore_auto_update_hostdownload_proc(void *fw_buf)
 		static u8 cb_block[1290];
 		int ret;
 
+		/* The shipping driver initializes the CB buffer as:
+		 *   memset(cb_ptr, 0, 1290);
+		 *   cb_ptr[0] = 0xCB;   (config block marker)
+		 *   cb_ptr[1] = 0x00;
+		 * The FW checks cb_ptr[0] to validate the config block. */
+		cb_block[0] = 0xCB;
+		cb_block[1] = 0x00;
+
 		mutex_lock(&gdev_fwu->transfer_lock);
 		ret = gcore_bus_write(cb_block, sizeof(cb_block));
 		mutex_unlock(&gdev_fwu->transfer_lock);
