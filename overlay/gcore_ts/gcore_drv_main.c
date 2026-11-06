@@ -1576,8 +1576,7 @@ static void gcore_spi_remove(struct spi_device *slave)
 	GTP_INFO("%s enter\n", __func__);
 	gcore_deinit(gdev);
 	GTP_INFO("%s exit\n", __func__);
-	return 0;
-}
+
 
 #if 0
 #ifdef CONFIG_TOUCH_DRIVER_RUN_ON_MTK_PLATFORM
