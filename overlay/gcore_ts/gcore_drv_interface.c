@@ -33,11 +33,15 @@ static int gcore_app_open(struct inode *inode, struct file *file);
 static ssize_t gcore_app_read(struct file *file, char __user *buffer, size_t count, loff_t *ppos);
 static long gcore_app_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
 
-struct file_operations gcore_app_fops = {
-	.open = gcore_app_open,
-	.read = gcore_app_read,
-	.write = NULL,
-	.unlocked_ioctl = gcore_app_ioctl,
+static const struct proc_ops gcore_selftest_pops = {
+	.proc_read = gcore_selftest_read,
+};
+
+static const struct proc_ops gcore_app_pops = {
+	.proc_open = gcore_app_open,
+	.proc_read = gcore_app_read,
+	.proc_write = NULL,
+	.proc_ioctl = gcore_app_ioctl,
 	.compat_ioctl = gcore_app_ioctl,
 };
 
@@ -401,13 +405,13 @@ ssize_t gcore_selftest_read(struct file *file, char __user *buffer, size_t count
 
 int gcore_app_node_init(void)
 {
-	gcore_proc_entry = proc_create(GCORE_PROC_FILE, 0666, NULL, &gcore_app_fops);
+	gcore_proc_entry = proc_create(GCORE_PROC_FILE, 0666, NULL, &gcore_app_pops);
 	if (gcore_proc_entry == NULL) {
 		GTP_ERROR("create proc entry gcore_app failed");
 		return -EPERM;
 	}
 
-	gcore_mp_entry = proc_create(GCORE_MP_FILE, 0666, NULL, &gcore_selftest_fops);
+	gcore_mp_entry = proc_create(GCORE_MP_FILE, 0666, NULL, &gcore_selftest_pops);
 	if (gcore_mp_entry == NULL) {
 		GTP_ERROR("create proc entry gcore_mp failed");
 		return -EPERM;
@@ -691,7 +695,7 @@ int gcore_tool_node_init(void)
 		goto cdev_add_fail;
 	}
 
-	tool_info.gcore_class = class_create(THIS_MODULE, "gcore");
+	tool_info.gcore_class = class_create("gcore");
 	if (IS_ERR(tool_info.gcore_class)) {
 		GTP_ERROR("class create fail!");
 		goto cls_cre_fail;
@@ -773,7 +777,7 @@ int gcore_sys_node_init(void)
 	int ret = 0;
 	struct device_attribute *attrs = touchscreen_attributes;
 
-	touchscreen_class = class_create(THIS_MODULE, "touchscreen");
+	touchscreen_class = class_create("touchscreen");
 	if (IS_ERR(touchscreen_class)) {
 		GTP_ERROR("create touchscreen class failed");
 		return -EPERM;
