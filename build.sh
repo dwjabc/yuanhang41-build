@@ -48,6 +48,40 @@ KC
         --jobs "$JOBS"
     rel=$(cat "$N/kernel-out/kernel.release")
     case "$rel" in *-yuanhang41-*) ;; *) echo "wrong release: $rel"; exit 1 ;; esac
+    echo "== staging the 24 vendor audio modules (e5-audio-dsp load order) =="
+    # The delivery cohort in kernel-out skips the Unisoc audio tree; the phone
+    # loads those from lib/modules/<rel>/audio in the order e5-audio-dsp spells
+    # out (genpd provider and DSP loader first, card last).
+    AD="$N/kernel-out/audio"; rm -rf "$AD"; mkdir -p "$AD"
+    OBJ="$N/objects"
+    for f in \
+        drivers/unisoc_platform/sprd_audio/agdsp_pd/agdsp_pd.ko \
+        drivers/unisoc_platform/sprd_audio/audiomem/audio_mem.ko \
+        drivers/unisoc_platform/sprd_audio/audiosipc/audio_sipc.ko \
+        drivers/unisoc_platform/sprd_audio/audiocpboot/sprd_audcp_boot.ko \
+        drivers/unisoc_platform/sprd_audio/audiodvfs/sprd_audcp_dvfs.ko \
+        drivers/unisoc_platform/sprd_audio/mcdt/mcdt_r2p0/mcdt_hw_r2p0.ko \
+        drivers/unisoc_platform/sprd_audio/audio_pipe/sprd_apipe.ko \
+        drivers/unisoc_platform/sprd_audio/audiopipe/audio-pipe.ko \
+        drivers/unisoc_platform/sprd_audio/audiodspdump/audio-dsp-dump.ko \
+        drivers/unisoc_platform/sprd_audio/voice_trigger_irq/voice_trigger_irq.ko \
+        sound/soc/sprd/unisoc/codec/dummy-codec/snd-soc-sprd-dummy-codec.ko \
+        sound/soc/sprd/unisoc/fsa4480/snd-soc-fsa4480.ko \
+        sound/soc/codecs/aw883xx/snd-soc-aw883xx.ko \
+        sound/soc/sprd/unisoc/machine/snd-soc-sprd-card.ko \
+        sound/soc/sprd/unisoc/codec/ump9620/power/snd-soc-sprd-codec-ump9620-power.ko \
+        sound/soc/sprd/unisoc/codec/ump9620/power_dev/snd-soc-sprd-codec-ump9620-power-dev.ko \
+        sound/soc/sprd/unisoc/codec/ump9620/codec/snd-soc-sprd-codec-ump9620.ko \
+        sound/soc/sprd/unisoc/codec/pdm_r2p0/snd-soc-sprd-pdm-r2p0.ko \
+        sound/soc/sprd/unisoc/dai/tdm/snd-soc-sprd-tdm.ko \
+        sound/soc/sprd/unisoc/dai/vbc_v4/vbc_dai/snd-soc-sprd-vbc-v4.ko \
+        sound/soc/sprd/unisoc/dai/vbc_v4/fe_dai/snd-soc-sprd-vbc-fe.ko \
+        sound/soc/sprd/unisoc/platform/compr_2stage_dma/sprd-compr-2stage-dma.ko \
+        sound/soc/sprd/unisoc/platform/platform_routing/sprd-platform-pcm-routing.ko \
+        sound/soc/sprd/unisoc/platform/dmaengine_pcm/sprd-dmaengine-pcm.ko ; do
+        cp "$OBJ/$f" "$AD/" || { echo "missing audio module: $f"; exit 1; }
+    done
+    echo "audio modules staged: $(ls "$AD" | wc -l)"
     echo "== kernel ok: $rel =="
     ;;
 
@@ -111,6 +145,11 @@ rootfs)
 
     T="$N/mods"; rm -rf "$T"; mkdir -p "$T"
     tar -xf "$N/kernel-out/root-modules.tar" -C "$T"
+    # the vendor audio modules load from the release dir's audio/ subdir
+    # (dependency-ordered insmod by e5-audio-dsp; kmodloader must NOT see
+    # them at top level) -- stage them so the write loop picks them up
+    mkdir -p "$T/lib/modules/$REL/audio"
+    cp "$N"/kernel-out/audio/*.ko "$T/lib/modules/$REL/audio/"
     CMDS2="$N/fs-cmds2"; : > "$CMDS2"
     (
         cd "$T"
