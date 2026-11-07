@@ -80,7 +80,7 @@
 #define GTP_DEBUG(fmt, arg...)				\
 	do {									\
 		if (1)						\
-			pr_err("<GTP-DBG>[%s:%d]"fmt"\n", __func__, __LINE__, ##arg);\
+			pr_info("<GTP-DBG>[%s:%d]"fmt"\n", __func__, __LINE__, ##arg);\
 	} while (0)
 #define GTP_REPORT(fmt, arg...)				\
 	do {									\

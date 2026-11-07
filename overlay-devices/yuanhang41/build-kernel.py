@@ -50,6 +50,9 @@ def main(*, profile='yuanhang41', here=HERE):
     # This unit answers the charger at the DT address (not the 41S 0x1a
     # override) and the vendor fgu needs type/status/percent export.
     runpy.run_path(str(here/'charger-fgu-stage.py'))['apply'](kernel)
+    # The stock DTB omits cm-thermal-zone; default the CM board temp to the
+    # built-in board-thmzone so charge thermal regulation is real.
+    runpy.run_path(str(here/'cm-thermal-stage.py'))['apply'](kernel)
     subprocess.run(['python3',str(TOP/'devices/common/test_power_probe.py'),
                     '--kernel',str(kernel)],check=True)
     for test in ('test_boot_soc.py', 'test_battery_periodic.py', 'test_capacity_remap.py', 'test_charger_endpoint.py'):
