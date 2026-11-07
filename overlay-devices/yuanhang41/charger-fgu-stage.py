@@ -21,6 +21,8 @@ def apply(kernel):
 
     charger = kernel / 'drivers' / 'power' / 'supply' / 'bq2560x-charger.c'
     s = charger.read_text(encoding='utf-8')
+    if 'yuanhang41: this unit answers at the DT address' in s:
+        return  # idempotent: staged in a previous pass
 
     old = ('\t/* P720S11 SGM41513: factory driver switches this DT alias to 0x1a. */\n'
            '\tclient->addr = 0x1a;\n')
