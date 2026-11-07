@@ -90,6 +90,10 @@ def apply(kernel):
     fgu = kernel / 'drivers' / 'power' / 'supply' / 'sprd_fuel_gauge_core.c'
     s = fgu.read_text(encoding='utf-8')
 
+    if 'POWER_SUPPLY_TYPE_BATTERY' in s.split('sc27xx-fgu')[1][:200]:
+        print('charger-fgu staged: already applied in a previous pass')
+        return  # idempotent: nothing resets the fgu file between passes
+
     old = ('\t.name\t\t\t= "sc27xx-fgu",\n'
            '\t.type\t\t\t= POWER_SUPPLY_TYPE_UNKNOWN,')
     new = ('\t.name\t\t\t= "sc27xx-fgu",\n'
