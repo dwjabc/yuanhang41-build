@@ -99,6 +99,13 @@ rootfs)
     echo "sif /lib/firmware/gcore_firmware_skyworth.bin uid 0" >> "$CMDS"
     echo "sif /lib/firmware/gcore_firmware_skyworth.bin gid 0" >> "$CMDS"
     echo "sif /lib/firmware/gcore_firmware_skyworth.bin mode 0100644" >> "$CMDS"
+    # infoscreen api.uc with the UMS9620 NR zone names (nr0/nr1/nr) added to
+    # the modem/nr temperature roll-ups; upstream t551m names (nr15/nr12)
+    # never match this board, leaving the baseband readings null.
+    echo "write $TOP/overlay/infoscreen-api.uc /usr/share/e5-infoscreen/api.uc" >> "$CMDS"
+    echo "sif /usr/share/e5-infoscreen/api.uc uid 0" >> "$CMDS"
+    echo "sif /usr/share/e5-infoscreen/api.uc gid 0" >> "$CMDS"
+    echo "sif /usr/share/e5-infoscreen/api.uc mode 0100644" >> "$CMDS"
     debugfs -w -f "$CMDS" "$IMG" > "$N/fs-log1" 2>&1
     ! grep -iE 'error|not found|cannot|failed' "$N/fs-log1" || { cat "$N/fs-log1"; exit 1; }
 
