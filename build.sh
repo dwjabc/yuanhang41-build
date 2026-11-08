@@ -212,21 +212,12 @@ boot)
     python3 - boot/init << 'PY'
 import sys
 src = open(sys.argv[1]).read()
-start = src.index('wdt=0x641e0000
-')
-end = src.index('
-fi
-', start) + len('
-fi
-')
-new = ('# Warm boots out of Android gate this domain; the diagnostic devmem
-'
-       '# read here SErrors and panics the kernel five seconds in, and LK
-'
-       '# rolls back to Android. Diagnostic-only, so it is skipped outright.
-'
-       'log "stage=wdt-skip gated-domain-on-warm-boot"
-')
+start = src.index('wdt=0x641e0000\n')
+end = src.index('\nfi\n', start) + len('\nfi\n')
+new = ('# Warm boots out of Android gate this domain; the diagnostic devmem\n'
+       '# read here SErrors and panics the kernel five seconds in, and LK\n'
+       '# rolls back to Android. Diagnostic-only, so it is skipped outright.\n'
+       'log "stage=wdt-skip gated-domain-on-warm-boot"\n')
 open(sys.argv[1], 'w').write(src[:start] + new + src[end:])
 print('boot/init: wdt diagnostic removed')
 PY
