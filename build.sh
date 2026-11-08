@@ -130,6 +130,14 @@ rootfs)
     # Ship the same OTA bin Android's kernel loads (6.17.5.13, verified
     # byte-for-byte in the Android dmesg download flow).
     echo "write $TOP/overlay/gcore_firmware_skyworth.bin /lib/firmware/gcore_firmware_skyworth.bin" >> "$CMDS"
+    # USB gadget watchdog: pick the UDC the gadget is actually bound to
+    # (configfs), not the first controller in /sys/class/udc -- the gadget
+    # lives on musb while the glob picked dwc3, so every soft-connect toggle
+    # went nowhere and RNDIS drops needed a cable replug to recover.
+    echo "write $TOP/overlay/e5-usb-watch.uc /usr/libexec/e5-usb-watch.uc" >> "$CMDS"
+    echo "sif /usr/libexec/e5-usb-watch.uc uid 0" >> "$CMDS"
+    echo "sif /usr/libexec/e5-usb-watch.uc gid 0" >> "$CMDS"
+    echo "sif /usr/libexec/e5-usb-watch.uc mode 0100755" >> "$CMDS"
     echo "sif /lib/firmware/gcore_firmware_skyworth.bin uid 0" >> "$CMDS"
     echo "sif /lib/firmware/gcore_firmware_skyworth.bin gid 0" >> "$CMDS"
     echo "sif /lib/firmware/gcore_firmware_skyworth.bin mode 0100644" >> "$CMDS"
@@ -196,6 +204,33 @@ boot)
     python3 boot/prepare-f2fs-tools.py --root "$FT" --out "$TOP/out/boot/f2fs-tools"
 
     cd "$REPO"
+    echo "== patching boot/init: skip the SoC-wdt devmem diagnostic =="
+    # Warm reboots out of Android leave the WDT/AGCP power domain gated; the
+    # initramfs' diagnostic devmem read of 0x641e0000 then SErrors and panics
+    # the kernel five seconds in, and LK rolls back to Android (FINDINGS.md
+    # 24.x documents the same AGCP trap). Diagnostic-only, so skip outright.
+    python3 - boot/init << 'PY'
+import sys
+src = open(sys.argv[1]).read()
+start = src.index('wdt=0x641e0000
+')
+end = src.index('
+fi
+', start) + len('
+fi
+')
+new = ('# Warm boots out of Android gate this domain; the diagnostic devmem
+'
+       '# read here SErrors and panics the kernel five seconds in, and LK
+'
+       '# rolls back to Android. Diagnostic-only, so it is skipped outright.
+'
+       'log "stage=wdt-skip gated-domain-on-warm-boot"
+')
+open(sys.argv[1], 'w').write(src[:start] + new + src[end:])
+print('boot/init: wdt diagnostic removed')
+PY
+
     echo "== normalizing misc BCAB =="
     # The device's live BCAB may carry successful_boot=0 on the Android slot
     # after an unconfirmed trial boot; the builder refuses that state. Android
