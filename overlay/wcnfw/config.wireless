@@ -1,0 +1,23 @@
+# Hotspot (AP) shipped enabled: a fresh flash broadcasts right away.
+# SSID/key are defaults -- change them in LuCI (Network -> Wireless).
+config wifi-device 'radio0'
+	option type 'mac80211'
+	option path 'platform/sprd-marlin3/sprd-marlin3:wlan'
+	option band '5g'
+	option channel '149'
+	option htmode 'VHT80'
+	option country 'CN'
+	option cell_density '0'
+	option disabled '0'
+
+config wifi-iface 'default_radio0'
+	option device 'radio0'
+	option network 'lan'
+	option mode 'ap'
+	option ssid 'E5-Linux'
+	option encryption 'psk2+ccmp'
+	option disabled '0'
+	option uapsd '0'
+	option ifname 'wlan0'
+	option wps_pushbutton '0'
+	option key '12345678'

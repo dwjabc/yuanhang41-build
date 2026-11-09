@@ -148,6 +148,39 @@ rootfs)
     echo "sif /usr/share/e5-infoscreen/api.uc uid 0" >> "$CMDS"
     echo "sif /usr/share/e5-infoscreen/api.uc gid 0" >> "$CMDS"
     echo "sif /usr/share/e5-infoscreen/api.uc mode 0100644" >> "$CMDS"
+    # WCN (marlin3lite) firmware: gitignored vendor blobs living in Android's
+    # odm_a erofs volume inside super, pulled once from this unit
+    # (overlay/wcnfw/SHA256SUMS).  Without them wcn_bsp's GNSS request_firmware
+    # fails and the /dev/block/by-name/wcnmodem partition fallback dead-ends --
+    # this board has no such GPT entry -- so the chip never powers on and
+    # wlan0 never appears.  The upstream installer expected these via a
+    # device-files.tar on userdata (openwrt/device-install-image.sh
+    # device_files_tar); shipping them in the image closes that gap.
+    for f in wcnmodem.bin gnssmodem.bin wifi_board_config.ini wifi_board_config_aa.ini \
+             bt_configure_pskey.ini bt_configure_rf.ini; do
+        echo "write $TOP/overlay/wcnfw/$f /lib/firmware/$f" >> "$CMDS"
+        echo "sif /lib/firmware/$f uid 0" >> "$CMDS"
+        echo "sif /lib/firmware/$f gid 0" >> "$CMDS"
+        echo "sif /lib/firmware/$f mode 0100644" >> "$CMDS"
+    done
+    # the wcn driver dumps its calibration backup into /mnt/vendor/wcn
+    echo "mkdir /mnt/vendor" >> "$CMDS"
+    echo "sif /mnt/vendor uid 0" >> "$CMDS"
+    echo "sif /mnt/vendor gid 0" >> "$CMDS"
+    echo "sif /mnt/vendor mode 040755" >> "$CMDS"
+    echo "mkdir /mnt/vendor/wcn" >> "$CMDS"
+    echo "sif /mnt/vendor/wcn uid 0" >> "$CMDS"
+    echo "sif /mnt/vendor/wcn gid 0" >> "$CMDS"
+    echo "sif /mnt/vendor/wcn mode 040755" >> "$CMDS"
+    # hotspot: the shipped /etc/config/wireless leaves the AP disabled (the
+    # upstream installer waits for install.conf to carry the Debian
+    # NetworkManager hotspot credentials, which a bare image never has).
+    # Ship it enabled so a fresh flash broadcasts E5-Linux right away.
+    echo "rm /etc/config/wireless" >> "$CMDS"
+    echo "write $TOP/overlay/wcnfw/config.wireless /etc/config/wireless" >> "$CMDS"
+    echo "sif /etc/config/wireless uid 0" >> "$CMDS"
+    echo "sif /etc/config/wireless gid 0" >> "$CMDS"
+    echo "sif /etc/config/wireless mode 0100644" >> "$CMDS"
     debugfs -w -f "$CMDS" "$IMG" > "$N/fs-log1" 2>&1
     ! grep -iE 'error|not found|cannot|failed' "$N/fs-log1" || { cat "$N/fs-log1"; exit 1; }
 
